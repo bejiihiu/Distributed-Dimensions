@@ -10,7 +10,7 @@ velocity-api = "4.2.0"
 # Wire protocol: one serialization library, checked by both platforms
 # (paper-api and velocity-api both carry the same gson 2.14.0, compile scope),
 # bundled and relocated for determinism on both platforms.
-gson = "2.14.0"
+gson = "2.15.0"
 # Persistence (the plugin's own state). JDBC drivers are runtime dependencies,
 # bundled into both jars with relocation; the admin must not carry extra files.
 hikaricp = "7.1.0"
