@@ -9,6 +9,8 @@ plugins {
 repositories {
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
+    // HuskSync public compileOnly API artifact; never bundled into the jar.
+    maven("https://repo.william278.net/releases")
 }
 
 dependencies {
@@ -16,6 +18,9 @@ dependencies {
     compileOnly(libs.paper.api)
     // Cloud для paper бандлится: платформы его не предоставляют.
     implementation(libs.cloud.paper)
+    // Public HuskSync API for the compile-time listener; runtime access is
+    // linkage-guarded and only used when HuskSync is actually installed.
+    compileOnly(libs.husksync.bukkit)
 
     // Фикстуры (FakeSchedulers, fake gateway, мировые прокси) публикуются через
     // testFixtures, чтобы поздние волны могли гонять логику порталов/сущностей

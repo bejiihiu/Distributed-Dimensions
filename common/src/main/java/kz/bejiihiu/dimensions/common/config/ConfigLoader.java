@@ -164,7 +164,11 @@ final class ConfigLoader {
             SyncSettings sync = new SyncSettings(
                     Nodes.bool(root, "sync", "enabled"),
                     Nodes.bool(root, "sync", "wait-for-sync"),
-                    Nodes.string(root, "sync", "plugin"));
+                    Nodes.string(root, "sync", "plugin"),
+                    Duration.ofMillis(Nodes.longValue(root, "sync", "wait-timeout")),
+                    Nodes.intValue(root, "sync", "wait-ticks"),
+                    Nodes.string(root, "sync", "reflection", "event-class"),
+                    Nodes.string(root, "sync", "reflection", "getter"));
 
             RedisSettings redis = new RedisSettings(Nodes.bool(root, "redis", "enabled"));
 

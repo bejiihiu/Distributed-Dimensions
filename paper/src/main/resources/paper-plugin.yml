@@ -9,4 +9,14 @@ api-version: '26.3'
 load: POSTWORLD
 folia-supported: true
 
+# HuskSync is a soft dependency: the plugin works without it (degraded mode),
+# but when it is installed we load before it and need linkage access to its
+# event classes. Required: false keeps startup working when HuskSync is absent.
+dependencies:
+  server:
+    HuskSync:
+      load: BEFORE
+      required: false
+      join-classpath: true
+
 authors: [ bejiihiu.xs ]

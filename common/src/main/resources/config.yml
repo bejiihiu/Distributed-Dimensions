@@ -88,8 +88,35 @@ sync:
 
   wait-for-sync: true
 
-  # Which sync plugin to use; "auto" — detect automatically.
+  # Which sync plugin strategy to use.
+  # "auto" — detect automatically: HuskSync API listener, else a reflection
+  #   listener on sync.reflection.event-class (when set), else a known
+  #   blocking-login sync plugin (fixed delay), else degraded mode.
+  # "husksync" — force the HuskSync API listener; fails loudly when unavailable.
+  # "reflection" — listener on sync.reflection.event-class; fails loudly when unset/broken.
+  # "delayed" — fixed delay after join (for plugins whose login implies applied data).
+  # "none" — no sync plugin is installed; degraded mode with a startup warning.
   plugin: "auto"
+
+  # Milliseconds the target backend waits for the sync plugin to finish applying
+  # the player's data before the wait fails. Fully asynchronous — never blocks
+  # the game thread. Keep this below network.transfer.timeout.
+  wait-timeout: 5000
+
+  # Fixed delay in ticks for the delay-based strategies ("delayed"/"none" and
+  # the "auto" fallbacks). 20 ticks = 1 second. Never exceeds sync.wait-timeout.
+  wait-ticks: 20
+
+  reflection:
+    # Event class the reflection strategy listens for. Must extend
+    # org.bukkit.event.Event; the listener registers at MONITOR priority and
+    # never modifies anything. Leave empty to disable the reflection strategy.
+    # HuskSync: net.william278.husksync.event.BukkitSyncCompleteEvent
+    event-class: ""
+    # No-arg method on the event returning the player: a Player, a UUID, or any
+    # object exposing getUuid(). HuskSync needs "getUser" here (its result
+    # exposes getUuid()); plugins with getPlayer() returning a Player keep the default.
+    getter: "getPlayer"
 
 redis:
   # Not required, but recommended; the plugin works without it.
@@ -151,4 +178,4 @@ mirage:
 
 # Internal schema version. Do not edit by hand; bumped by the migration
 # framework when the schema changes.
-config-version: 1
+config-version: 2

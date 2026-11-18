@@ -71,6 +71,11 @@ class BundledDefaultsRoundTripTest {
         assertTrue(c.sync().enabled());
         assertTrue(c.sync().waitForSync());
         assertEquals("auto", c.sync().plugin());
+        assertEquals(Duration.ofMillis(5_000), c.sync().waitTimeout());
+        assertEquals(20, c.sync().waitTicks());
+        assertEquals("", c.sync().reflectionEventClass());
+        assertEquals("getPlayer", c.sync().reflectionGetter());
+        assertFalse(c.sync().reflectionConfigured());
 
         // redis
         assertFalse(c.redis().enabled());
@@ -102,7 +107,7 @@ class BundledDefaultsRoundTripTest {
         assertEquals(6000, c.mirage().fixedTime());
 
         // schema version
-        assertEquals(1, c.configVersion());
+        assertEquals(2, c.configVersion());
     }
 
     @Test

@@ -12,6 +12,7 @@ import kz.bejiihiu.dimensions.common.persistence.PersistenceSettings;
 import kz.bejiihiu.dimensions.paper.chunktickets.ChunkTicketService;
 import kz.bejiihiu.dimensions.paper.scheduler.PlatformSchedulers;
 import kz.bejiihiu.dimensions.paper.scheduler.Schedulers;
+import kz.bejiihiu.dimensions.paper.sync.SyncServices;
 
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
@@ -35,6 +36,7 @@ import java.util.Optional;
 public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
 
     private PaperServices services;
+    private SyncServices syncServices;
 
     @Override
     public void onEnable() {
@@ -97,6 +99,18 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
                 persistenceFailure, schedulers, chunkTickets, dimensions, logger::error);
         Bukkit.getServicesManager().register(PaperServices.class, services, this, ServicePriority.Normal);
 
+        // --- stage 5: external player-data sync integration ----------------------
+        // Never fails the boot: every failure lands on a loud working fallback
+        // (see SyncIntegrationFactory). The arrival flow resolves the holder
+        // through ServicesManager when a transfer lands.
+        try {
+            syncServices = SyncServices.bootstrap(this, schedulers, config, logger);
+        } catch (RuntimeException | LinkageError e) {
+            // factory is designed never to throw; belt-and-braces — degrade loudly
+            logger.error("SEVERE: sync integration bootstrap failed ({}); transfers will fail until restart",
+                    e.toString());
+        }
+
         if (!services.isHealthy()) {
             logger.error("SEVERE: backend is DEGRADED — {}. Later waves must refuse transfers.",
                     String.join(" | ", services.health().reasons()));
@@ -111,7 +125,16 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
         Logger logger = getSLF4JLogger();
         PaperServices current = services;
         services = null;
+        SyncServices currentSync = syncServices;
+        syncServices = null;
         Bukkit.getServicesManager().unregisterAll(this);
+        if (currentSync != null) {
+            try {
+                currentSync.close();
+            } catch (RuntimeException e) {
+                logger.error("error while closing sync services: {}", SecretsRedactor.redact(e.getMessage()));
+            }
+        }
         if (current != null) {
             try {
                 current.close();

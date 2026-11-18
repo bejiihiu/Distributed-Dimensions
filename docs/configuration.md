@@ -51,7 +51,8 @@ deployments should use `password: "${DB_PASSWORD}"` (the shipped default).
 
 ## `config-version` and schema evolution
 
-Integer key, top level. `1` is the current schema. A file without the key is treated as
+Integer key, top level. `2` is the current schema (v1 → v2 added the `sync.*`
+integration keys). A file without the key is treated as
 `0` and brought forward by the migration framework. Migrations are class-based
 (`ConfigMigration`, one per version step), applied strictly in order; a registered gap in
 the chain is a hard error. After a successful migration the file is saved back atomically
@@ -90,9 +91,13 @@ with `config-version` stamped. Never edit `config-version` by hand.
 | `api.enabled` | boolean | `true` | paper | Public API surface for other plugins. Consumed-by-design. |
 | `api.compat.fire-synthetic-events` | boolean | `false` | paper | Re-dispatch synthetic portal/teleport events on the target server. Consumed-by-design. |
 | `api.compat.grant-advancements` | boolean | `true` | paper | Idempotent advancement criteria grant (`enter_the_nether` / `enter_the_end`). Consumed-by-design. |
-| `sync.enabled` | boolean | `true` | paper | Player-data sync via external plugin. Consumed-by-design. |
-| `sync.wait-for-sync` | boolean | `true` | paper | Block the transfer flow until the sync plugin acks. |
-| `sync.plugin` | string | `auto` | paper | Sync plugin name; `auto` = detect. |
+| `sync.enabled` | boolean | `true` | paper | Player-data sync via external plugin. Active. |
+| `sync.wait-for-sync` | boolean | `true` | paper | Await applied sync data on the target before the transfer proceeds. When false, no wait is armed (transfers proceed unconfirmed; one-time warning). |
+| `sync.plugin` | string | `auto` | paper | Sync strategy: `auto`, `husksync`, `reflection`, `delayed`, `none`. See `docs/player-sync.md`. |
+| `sync.wait-timeout` | int (milliseconds) > 0 | `5000` | paper | Upper bound of every sync wait; never blocks the game thread. Active. |
+| `sync.wait-ticks` | int >= 0 | `20` | paper | Fixed delay for the delay-based strategies; capped at `sync.wait-timeout`. Active. |
+| `sync.reflection.event-class` | string (FQCN) or `""` | `""` | paper | Event class for the reflection strategy; must extend `org.bukkit.event.Event`. Active. |
+| `sync.reflection.getter` | string (method name) | `getPlayer` | paper | No-arg getter on the event returning a Player, a UUID, or an object with `getUuid()`. Active. |
 | `redis.enabled` | boolean | `false` | both | Redis availability hint. **Reserved** — no consumer reads it yet; enables nothing today. |
 | `database.type` | enum (`mysql`/`mariadb`/`postgresql`/`mongodb`) | `mysql` | paper | Engine. `${VAR}`-free literal. Active. |
 | `database.jdbc-url` | string | `jdbc:mysql://localhost:3306/distributed_dimensions` | paper | JDBC URL (SQL types). `${VAR}` expanded at load. Active. |
@@ -114,7 +119,7 @@ with `config-version` stamped. Never edit `config-version` by hand.
 | `mirage.names.end` | string | `world_the_end` | paper | Mirage world name for the end slot. |
 | `mirage.block-edits` | enum (`cancel`) | `cancel` | paper | Guard behavior for edits inside mirage worlds. Consumed-by-design. |
 | `mirage.fixed-time` | int in `[0, 24000]` | `6000` | paper | Gamerule time pinned in mirage worlds (noon). Consumed-by-design. |
-| `config-version` | int ≥ 1 | `1` | both | Schema version; drives the migration framework. Active. |
+| `config-version` | int >= 1 | `2` | both | Schema version; drives the migration framework. Active. |
 
 ## Platform applicability notes
 
@@ -139,7 +144,7 @@ network:
       dimension: "minecraft:the_nether"
   proxy:
     enabled: true
-config-version: 1
+config-version: 2
 ```
 
 Anything omitted is healed from the bundled defaults at load time; the file on disk is

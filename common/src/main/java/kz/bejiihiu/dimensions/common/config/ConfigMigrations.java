@@ -12,9 +12,9 @@ import java.util.Map;
  */
 final class ConfigMigrations {
 
-    static final int CURRENT_VERSION = 1;
+    static final int CURRENT_VERSION = 2;
 
-    static final List<ConfigMigration> ALL = List.of(new Migration0To1());
+    static final List<ConfigMigration> ALL = List.of(new Migration0To1(), new Migration1To2());
 
     private ConfigMigrations() {
     }

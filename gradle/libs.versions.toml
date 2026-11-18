@@ -45,6 +45,9 @@ junit = "6.1.3"
 [libraries]
 paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
 velocity-api = { module = "com.velocitypowered:velocity-api", version.ref = "velocity-api" }
+# HuskSync public compileOnly API (BukkitSyncCompleteEvent et al.), see docs/player-sync.md.
+# Pinned to the build matching our platform (MC 26.3); compileOnly only, never bundled.
+husksync-bukkit = { module = "net.william278.husksync:husksync-bukkit", version = "4.1.0+26.3" }
 
 adventure-api = { module = "net.kyori:adventure-api", version.ref = "adventure" }
 adventure-minimessage = { module = "net.kyori:adventure-text-minimessage", version.ref = "adventure" }
