@@ -44,6 +44,31 @@ class InteropTest {
     }
 
     @Test
+    void sourceServerNameResolverPrefersConfiguredValue() {
+        String previous = System.getProperty(SourceServerName.SYSTEM_PROPERTY);
+        try {
+            System.setProperty(SourceServerName.SYSTEM_PROPERTY, "sysprop-name");
+
+            assertEquals("configured-name", SourceServerName.resolve("configured-name"),
+                    "non-blank config must win over env and sysprop");
+            assertEquals("configured-name", SourceServerName.resolve("  configured-name  "),
+                    "config value is normalized like every other source");
+
+            // blank and malformed config behave exactly like an unconfigured source:
+            // the rest of the chain is consulted (env first, then sysprop)
+            assertEquals(SourceServerName.resolve(null), SourceServerName.resolve("   "));
+            assertEquals(SourceServerName.resolve(null), SourceServerName.resolve("not a server!"));
+            assertEquals(SourceServerName.resolve(null), SourceServerName.resolve(null));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(SourceServerName.SYSTEM_PROPERTY);
+            } else {
+                System.setProperty(SourceServerName.SYSTEM_PROPERTY, previous);
+            }
+        }
+    }
+
+    @Test
     void sourceServerNameResolverReadsAndValidatesTheSystemProperty() {
         String previous = System.getProperty(SourceServerName.SYSTEM_PROPERTY);
         try {

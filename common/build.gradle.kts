@@ -3,8 +3,6 @@ repositories {
 }
 
 dependencies {
-    api(project(":api"))
-
     // Adventure идёт через api: типы Component торчат в публичных сигнатурах.
     // В рантайме его дают сами платформы, из shade-бандлов группа net.kyori вырезается.
     api(libs.adventure.api)

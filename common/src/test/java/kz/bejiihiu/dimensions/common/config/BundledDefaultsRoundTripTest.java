@@ -37,6 +37,7 @@ class BundledDefaultsRoundTripTest {
 
         // network
         assertTrue(c.network().proxy().enabled());
+        assertEquals("", c.network().sourceServer());
         assertEquals(Duration.ofMillis(10_000), c.network().transfer().timeout());
         assertEquals(2, c.network().transfer().maxRetries());
         assertEquals(new DimensionTarget("overworld", "minecraft:overworld"), c.network().dimensions().overworld());
@@ -107,7 +108,7 @@ class BundledDefaultsRoundTripTest {
         assertEquals(6000, c.mirage().fixedTime());
 
         // schema version
-        assertEquals(2, c.configVersion());
+        assertEquals(3, c.configVersion());
     }
 
     @Test

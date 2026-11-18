@@ -57,7 +57,7 @@ class ConfigurationServiceTest {
 
     @Test
     void partialFileHealsMissingKeysFromDefaultsWithoutRewritingFile() throws Exception {
-        String partial = "config-version: 2\ngeneral:\n  language: \"ru\"\n";
+        String partial = "config-version: 3\ngeneral:\n  language: \"ru\"\n";
         write(partial);
         ConfigurationService service = newService();
 
@@ -67,7 +67,7 @@ class ConfigurationServiceTest {
         assertTrue(config.general().strictVanillaMode(), "missing key must be healed from defaults");
         assertEquals("nether", config.network().dimensions().nether().server());
         assertEquals(partial, Files.readString(configPath(), StandardCharsets.UTF_8),
-                "healing a v2 file must not rewrite it");
+                "healing a v3 file must not rewrite it");
         assertTrue(service.health().isEmpty());
         assertEquals(List.of(), service.report().warnings());
     }
@@ -184,11 +184,12 @@ class ConfigurationServiceTest {
         assertEquals("ru", config.general().language());
         assertTrue(config.redis().enabled(), "user values must survive the migration");
         assertEquals(0, service.report().migratedFrom());
-        assertEquals(2, service.report().migratedTo());
+        assertEquals(3, service.report().migratedTo());
         assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 0")));
         assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 1")));
+        assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 2")));
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
-        assertTrue(saved.contains("config-version: 2"), "migrated file must be saved back");
+        assertTrue(saved.contains("config-version: 3"), "migrated file must be saved back");
         assertFalse(saved.contains("debug: true"), "legacy general.debug must be dropped by the migration");
     }
 
@@ -200,7 +201,7 @@ class ConfigurationServiceTest {
 
         PluginConfig config = service.load();
 
-        assertEquals(2, config.configVersion());
+        assertEquals(3, config.configVersion());
         assertEquals("delayed", config.sync().plugin(), "user values must survive the migration");
         assertTrue(config.redis().enabled(), "user values must survive the migration");
         assertEquals(Duration.ofMillis(5_000), config.sync().waitTimeout(),
@@ -208,11 +209,61 @@ class ConfigurationServiceTest {
         assertEquals(20, config.sync().waitTicks());
         assertEquals("", config.sync().reflectionEventClass());
         assertEquals("getPlayer", config.sync().reflectionGetter());
+        assertEquals("", config.network().sourceServer(), "v2 file has no source-server — healed to the default");
         assertEquals(1, service.report().migratedFrom());
-        assertEquals(2, service.report().migratedTo());
+        assertEquals(3, service.report().migratedTo());
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
-        assertTrue(saved.contains("config-version: 2"), "migrated file must be saved back");
+        assertTrue(saved.contains("config-version: 3"), "migrated file must be saved back");
         assertTrue(saved.contains("wait-timeout"), "healed key must be persisted");
+    }
+
+    @Test
+    void migrationV2ToV3AddsSourceServerKeyAndSavesBack() throws Exception {
+        // a genuine v2 file: no network.source-server key
+        write("""
+                config-version: 2
+                redis:
+                  enabled: true
+                """);
+        ConfigurationService service = newService();
+
+        PluginConfig config = service.load();
+
+        assertEquals(3, config.configVersion());
+        assertEquals("", config.network().sourceServer(), "new key must be healed from defaults");
+        assertTrue(config.redis().enabled(), "user values must survive the migration");
+        assertEquals(2, service.report().migratedFrom());
+        assertEquals(3, service.report().migratedTo());
+        String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
+        assertTrue(saved.contains("config-version: 3"), "migrated file must be saved back");
+        assertTrue(saved.contains("source-server"), "healed key must be persisted");
+    }
+
+    @Test
+    void migrationV2ToV3KeepsAnExplicitSourceServer() throws Exception {
+        write("""
+                config-version: 2
+                network:
+                  source-server: "nether-backend"
+                """);
+        ConfigurationService service = newService();
+
+        PluginConfig config = service.load();
+
+        assertEquals(3, config.configVersion());
+        assertEquals("nether-backend", config.network().sourceServer(),
+                "an explicitly configured source-server must survive the migration untouched");
+        String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
+        assertTrue(saved.contains("nether-backend"));
+    }
+
+    @Test
+    void defaultsRoundTripCarriesV3Defaults() {
+        PluginConfig config = ConfigLoader.defaultsSnapshot(Environment.resolve(dir), ENV);
+
+        assertEquals(ConfigMigrations.CURRENT_VERSION, config.configVersion());
+        assertEquals(3, config.configVersion());
+        assertEquals("", config.network().sourceServer(), "bundled default must be the unset sentinel");
     }
 
     @Test
@@ -237,7 +288,7 @@ class ConfigurationServiceTest {
 
     @Test
     void healOnlyLoadKeepsUserFileUntouchedEvenWithWarningsAndHealing() throws Exception {
-        String partial = "config-version: 2\nbogus:\n  key: 1\ngeneral:\n  language: \"ru\"\n";
+        String partial = "config-version: 3\nbogus:\n  key: 1\ngeneral:\n  language: \"ru\"\n";
         write(partial);
 
         newService().load();
@@ -267,7 +318,7 @@ class ConfigurationServiceTest {
         assertTrue(service.isHealthy());
         assertEquals("en", config.general().language());
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
-        assertTrue(saved.contains("config-version: 2"), "empty file is a v0 file — the migration save brings it up");
+        assertTrue(saved.contains("config-version: 3"), "empty file is a v0 file — the migration save brings it up");
         assertTrue(saved.contains("mirage"), "saved file must carry the healed defaults");
     }
 

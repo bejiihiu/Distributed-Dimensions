@@ -92,46 +92,63 @@ public final class ProtocolCodec {
 
     /** Decodes a JSON string. See class javadoc for the acceptance rules. */
     public static ProtocolMessage decode(String json) throws ProtocolDecodeException {
-        if (json == null || json.isBlank()) {
-            throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload is null or blank");
-        }
-        if (json.length() > MAX_MESSAGE_BYTES) {
-            throw new ProtocolDecodeException(DecodeError.OVERSIZE,
-                    "payload exceeds " + MAX_MESSAGE_BYTES + " bytes");
-        }
-        WireFormat.rejectIfTooDeep(json);
-        final JsonObject root;
         try {
-            var parsed = JsonParser.parseString(json);
-            if (!parsed.isJsonObject()) {
-                throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload must be a JSON object");
+            if (json == null || json.isBlank()) {
+                throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload is null or blank");
             }
-            root = parsed.getAsJsonObject();
+            if (json.length() > MAX_MESSAGE_BYTES) {
+                throw new ProtocolDecodeException(DecodeError.OVERSIZE,
+                        "payload exceeds " + MAX_MESSAGE_BYTES + " bytes");
+            }
+            WireFormat.rejectIfTooDeep(json);
+            final JsonObject root;
+            try {
+                var parsed = JsonParser.parseString(json);
+                if (!parsed.isJsonObject()) {
+                    throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload must be a JSON object");
+                }
+                root = parsed.getAsJsonObject();
+            } catch (ProtocolDecodeException e) {
+                throw e;
+            } catch (JsonSyntaxException | IllegalStateException | StackOverflowError e) {
+                throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload is not well-formed JSON", e);
+            }
+
+            requireVersion(root);
+            String type = requireType(root);
+            CheckedDecoder decoder = DECODERS.get(type);
+            if (decoder == null) {
+                throw new ProtocolDecodeException(DecodeError.UNKNOWN_TYPE, "unknown message type: '" + type + "'");
+            }
+            return decoder.decode(root);
         } catch (ProtocolDecodeException e) {
             throw e;
-        } catch (JsonSyntaxException | IllegalStateException | StackOverflowError e) {
-            throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload is not well-formed JSON", e);
+        } catch (Throwable t) {
+            // the decoders above translate expected schema violations precisely; this net catches
+            // everything they miss (NPEs from record invariants, unexpected library failures, ...)
+            // so a hostile payload can never surface as a bare RuntimeException to the caller
+            throw new ProtocolDecodeException(DecodeError.INVALID_VALUE,
+                    "unexpected failure while decoding payload (" + t.getClass().getSimpleName() + ")", t);
         }
-
-        requireVersion(root);
-        String type = requireType(root);
-        CheckedDecoder decoder = DECODERS.get(type);
-        if (decoder == null) {
-            throw new ProtocolDecodeException(DecodeError.UNKNOWN_TYPE, "unknown message type: '" + type + "'");
-        }
-        return decoder.decode(root);
     }
 
     /** Decodes raw bytes; enforces the channel size limit exactly. */
     public static ProtocolMessage decode(byte[] utf8Payload) throws ProtocolDecodeException {
-        if (utf8Payload == null) {
-            throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload is null");
+        try {
+            if (utf8Payload == null) {
+                throw new ProtocolDecodeException(DecodeError.MALFORMED_JSON, "payload is null");
+            }
+            if (utf8Payload.length > MAX_MESSAGE_BYTES) {
+                throw new ProtocolDecodeException(DecodeError.OVERSIZE,
+                        "payload exceeds " + MAX_MESSAGE_BYTES + " bytes (got " + utf8Payload.length + ")");
+            }
+            return decode(new String(utf8Payload, StandardCharsets.UTF_8));
+        } catch (ProtocolDecodeException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new ProtocolDecodeException(DecodeError.INVALID_VALUE,
+                    "unexpected failure while decoding payload bytes (" + t.getClass().getSimpleName() + ")", t);
         }
-        if (utf8Payload.length > MAX_MESSAGE_BYTES) {
-            throw new ProtocolDecodeException(DecodeError.OVERSIZE,
-                    "payload exceeds " + MAX_MESSAGE_BYTES + " bytes (got " + utf8Payload.length + ")");
-        }
-        return decode(new String(utf8Payload, StandardCharsets.UTF_8));
     }
 
     // ------------------------------------------------------------ envelope

@@ -12,6 +12,7 @@ repositories {
 
 dependencies {
     implementation(project(":common"))
+    implementation(project(":api"))
     compileOnly(libs.velocity.api)
     annotationProcessor(libs.velocity.api)
     compileOnly(libs.annotations)

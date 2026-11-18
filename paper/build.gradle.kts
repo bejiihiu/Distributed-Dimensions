@@ -15,6 +15,7 @@ repositories {
 
 dependencies {
     implementation(project(":common"))
+    implementation(project(":api"))
     compileOnly(libs.paper.api)
     // Cloud для paper бандлится: платформы его не предоставляют.
     implementation(libs.cloud.paper)

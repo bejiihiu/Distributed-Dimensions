@@ -14,6 +14,15 @@ general:
   strict-vanilla-mode: true
 
 network:
+  # This backend's own registered server name in the proxy — the name Velocity
+  # knows this server by. Required for cross-server transfer routing in
+  # production: the proxy rejects a transfer request whose source_server does
+  # not equal the requesting connection's registered name. Grammar
+  # [A-Za-z0-9_-]{1,64}. Leave empty to disable transfers fail-closed; when
+  # blank, DD_SOURCE_SERVER (env var) and -Ddimensions.source-server (JVM
+  # system property) are consulted instead.
+  source-server: ""
+
   proxy:
     # Proxy-mode availability: the backend advertises transfer targets and the
     # proxy performs the actual player switch. False = backend-only deployments.
@@ -178,4 +187,4 @@ mirage:
 
 # Internal schema version. Do not edit by hand; bumped by the migration
 # framework when the schema changes.
-config-version: 2
+config-version: 3

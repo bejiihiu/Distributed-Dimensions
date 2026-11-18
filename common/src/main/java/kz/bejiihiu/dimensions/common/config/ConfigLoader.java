@@ -131,7 +131,8 @@ final class ConfigLoader {
                     new DimensionsSettings(
                             dimensionTarget(root, "overworld"),
                             dimensionTarget(root, "nether"),
-                            dimensionTarget(root, "end")));
+                            dimensionTarget(root, "end")),
+                    Nodes.string(root, "network", "source-server"));
 
             PortalsSettings portals = new PortalsSettings(
                     new NetherPortalsSettings(

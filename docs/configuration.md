@@ -51,12 +51,13 @@ deployments should use `password: "${DB_PASSWORD}"` (the shipped default).
 
 ## `config-version` and schema evolution
 
-Integer key, top level. `2` is the current schema (v1 → v2 added the `sync.*`
-integration keys). A file without the key is treated as
-`0` and brought forward by the migration framework. Migrations are class-based
-(`ConfigMigration`, one per version step), applied strictly in order; a registered gap in
-the chain is a hard error. After a successful migration the file is saved back atomically
-with `config-version` stamped. Never edit `config-version` by hand.
+Integer key, top level. `3` is the current schema (v1 → v2 added the `sync.*`
+integration keys; v2 → v3 added `network.source-server`). A file without the key
+is treated as `0` and brought forward by the migration framework. Migrations are
+class-based (`ConfigMigration`, one per version step), applied strictly in order;
+a registered gap in the chain is a hard error. After a successful migration the
+file is saved back atomically with `config-version` stamped. Never edit
+`config-version` by hand.
 
 ## Key reference
 
@@ -65,6 +66,7 @@ with `config-version` stamped. Never edit `config-version` by hand.
 | `general.language` | string (`en`/`ru`) | `en` | both | Message language for user-facing plugin text. Consumed-by-design. |
 | `general.strict-vanilla-mode` | boolean | `true` | both | Restrict the plugin to assisting the vanilla flow. Consumed-by-design. |
 | `network.proxy.enabled` | boolean | `true` | both | Proxy-mode participation. Consumed-by-design (proxy routing). |
+| `network.source-server` | string, `[A-Za-z0-9_-]{1,64}` or `""` | `""` | both | This backend's own registered server name in the proxy; required for transfer routing (the proxy rejects a mismatched `source_server`). Blank = unset, transfers fail closed; `DD_SOURCE_SERVER` env var and `-Ddimensions.source-server` sysprop are consulted instead. Consumed-by-design (transfer-routing wiring). |
 | `network.transfer.timeout` | int (milliseconds) | `10000` | both | Transfer attempt timeout; > 0. Consumed-by-design. |
 | `network.transfer.max-retries` | int | `2` | both | Transfer retries before giving up; ≥ 0. Consumed-by-design. |
 | `network.dimensions.overworld.server` | string | `overworld` | both | Proxy server holding the overworld dimension. Grammar `[A-Za-z0-9_-]{1,64}`. Consumed-by-design. |
@@ -119,7 +121,7 @@ with `config-version` stamped. Never edit `config-version` by hand.
 | `mirage.names.end` | string | `world_the_end` | paper | Mirage world name for the end slot. |
 | `mirage.block-edits` | enum (`cancel`) | `cancel` | paper | Guard behavior for edits inside mirage worlds. Consumed-by-design. |
 | `mirage.fixed-time` | int in `[0, 24000]` | `6000` | paper | Gamerule time pinned in mirage worlds (noon). Consumed-by-design. |
-| `config-version` | int >= 1 | `2` | both | Schema version; drives the migration framework. Active. |
+| `config-version` | int >= 1 | `3` | both | Schema version; drives the migration framework. Active. |
 
 ## Platform applicability notes
 
@@ -144,7 +146,7 @@ network:
       dimension: "minecraft:the_nether"
   proxy:
     enabled: true
-config-version: 2
+config-version: 3
 ```
 
 Anything omitted is healed from the bundled defaults at load time; the file on disk is
