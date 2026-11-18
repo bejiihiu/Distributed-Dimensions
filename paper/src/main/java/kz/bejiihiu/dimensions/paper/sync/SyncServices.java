@@ -4,7 +4,6 @@ import kz.bejiihiu.dimensions.common.config.PluginConfig;
 import kz.bejiihiu.dimensions.paper.scheduler.Schedulers;
 
 import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.ServicesManager;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -54,10 +53,10 @@ public final class SyncServices implements AutoCloseable {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(logger, "logger");
 
-        Predicate<UUID> onlineCheck = uuid -> {
-            Player player = Bukkit.getPlayer(uuid);
-            return player != null && player.isOnline();
-        };
+        // registry lookup only — the check runs off the player's owning region (the global
+        // timeout task) and Player#isOnline() is entity access we do not want there; a player
+        // present in the online map is online for our purposes
+        Predicate<UUID> onlineCheck = uuid -> Bukkit.getPlayer(uuid) != null;
         LongSupplier clock = System::currentTimeMillis;
 
         SyncIntegration integration = SyncIntegrationFactory.bind(

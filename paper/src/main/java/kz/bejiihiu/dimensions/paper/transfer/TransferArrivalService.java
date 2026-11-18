@@ -456,12 +456,21 @@ public final class TransferArrivalService {
         return cause instanceof SyncTimeoutException timeout && timeout.reason() == TimeoutReason.PLAYER_OFFLINE;
     }
 
+    /**
+     * Best-effort online probe for the failure paths. Prefers the entity's own status (exact,
+     * and truthful when called from the entity's owning region), falls back to a registry
+     * lookup when the entity access is refused, and to {@code false} when even that is broken —
+     * a reference we cannot probe is not an online reference.
+     */
     private static boolean safeIsOnline(Player player) {
         try {
             return player.isOnline();
         } catch (RuntimeException | LinkageError error) {
-            // a reference we cannot probe is not an online reference
-            return false;
+            try {
+                return org.bukkit.Bukkit.getPlayer(player.getUniqueId()) != null;
+            } catch (RuntimeException | LinkageError fallback) {
+                return false;
+            }
         }
     }
 

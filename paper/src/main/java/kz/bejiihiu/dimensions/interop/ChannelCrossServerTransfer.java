@@ -304,13 +304,16 @@ public final class ChannelCrossServerTransfer implements CrossServerTransfer, Pl
 
     private void dispatchFailedSafely(UUID operationId, Player player, DimensionId from,
                                       TransferCommand command, TransferError error, OperationState phase) {
+        // probed before dispatching: the event goes out on the global region thread and the
+        // player reference may not be touched from there; the registry lookup is thread-safe
+        boolean playerOnline = player != null && Bukkit.getPlayer(player.getUniqueId()) != null;
         schedulers.runGlobal(() -> TransferEvents.dispatchFailed(operationId, player,
                 InteropMapping.apiDimension(from),
                 InteropMapping.apiDimension(command.targetDimension()),
                 InteropMapping.apiCause(command.cause()),
                 InteropMapping.apiTransferError(error),
                 InteropMapping.apiOperationState(phase),
-                player.isOnline()));
+                playerOnline));
     }
 
     private void failAndNotify(UUID operationId, Player player, DimensionId from,

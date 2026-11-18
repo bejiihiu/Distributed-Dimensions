@@ -214,20 +214,38 @@ public final class PortalTransferService implements TransferChannelSink {
 
         Optional<TransferPending> tracked = tracker.peek(op.operationId(), failedAt);
         Player subject = tracked.map(TransferPending::player).orElse(null);
-        boolean playerOnline = subject != null && subject.isOnline();
+        boolean playerOnline = subject != null && onlineProbe(subject);
         OperationState phase = op.state();
         tracker.drop(op.operationId());
 
+        if (subject != null) {
+            // the notice touches the player (isOnline/sendMessage) — it must hop to the player's owning region
+            backend.schedulers().runOn(subject, () -> notifyPlayer(subject, error, detail));
+        }
         // the api contract wants the dispatch synchronous on a reasonable thread; the global region is ours
-        backend.schedulers().runGlobal(() -> {
-            notifyPlayer(subject, error, detail);
-            backend.events().fireFailed(
-                    op.operationId(), subject, op.sourceDimension(), op.targetDimension(), op.cause(),
-                    error, phase, playerOnline);
-        });
+        backend.schedulers().runGlobal(() -> backend.events().fireFailed(
+                op.operationId(), subject, op.sourceDimension(), op.targetDimension(), op.cause(),
+                error, phase, playerOnline));
     }
 
     // ------------------------------------------------------------ helpers
+
+    /**
+     * Online probe for the failure paths. Prefers the entity's own status; falls back to a
+     * registry lookup when entity access is refused and to {@code false} when even that is
+     * broken. Registry lookup alone is not enough — unit tests run without a server.
+     */
+    private static boolean onlineProbe(Player player) {
+        try {
+            return player.isOnline();
+        } catch (RuntimeException | LinkageError e) {
+            try {
+                return org.bukkit.Bukkit.getPlayer(player.getUniqueId()) != null;
+            } catch (RuntimeException | LinkageError fallback) {
+                return false;
+            }
+        }
+    }
 
     private void scheduleWatchdog(UUID operationId) {
         long timeoutMs = backend.config().network().transfer().timeout().toMillis();
@@ -262,22 +280,22 @@ public final class PortalTransferService implements TransferChannelSink {
         }
         Optional<TransferPending> tracked = tracker.peek(operationId, failedAt);
         Player subject = tracked.map(TransferPending::player).orElse(null);
-        boolean playerOnline = subject != null && subject.isOnline();
+        boolean playerOnline = subject != null && onlineProbe(subject);
         OperationState phase = op.state();
         tracker.drop(operationId);
-        backend.schedulers().runGlobal(() -> {
-            notifyPlayer(subject, TransferError.TIMEOUT,
-                    "the trip took too long and was cancelled");
-            backend.events().fireFailed(
-                    operationId, subject, op.sourceDimension(), op.targetDimension(), op.cause(),
-                    TransferError.TIMEOUT, phase, playerOnline);
-        });
+        if (subject != null) {
+            backend.schedulers().runOn(subject, () -> notifyPlayer(subject, TransferError.TIMEOUT,
+                    "the trip took too long and was cancelled"));
+        }
+        backend.schedulers().runGlobal(() -> backend.events().fireFailed(
+                operationId, subject, op.sourceDimension(), op.targetDimension(), op.cause(),
+                TransferError.TIMEOUT, phase, playerOnline));
     }
 
     /**
      * Best-effort player-facing notice on the asynchronous failure paths. i18n comes in a
      * later wave; English only. Deliberately quiet when the subject is offline — nothing
-     * useful can be said to them.
+     * useful can be said to them. Runs on the subject's owning region (see the callers).
      */
     private void notifyPlayer(Player subject, TransferError error, String detail) {
         if (subject == null || !subject.isOnline()) {

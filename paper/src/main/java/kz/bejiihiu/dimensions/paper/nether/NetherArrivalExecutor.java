@@ -273,7 +273,9 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
                 PortalSearch.selectForDestination(ideal, () -> harvested, destIsNether, border);
         List<PortalCandidate> grouped = PortalCandidateGrouper.group(harvested);
         if (!indexer.degraded()) {
-            indexer.reconcile(dimension, queried, harvested, grouped);
+            // reconcile is a database write — never run it on the entity thread
+            backend.schedulers().runAsync(() ->
+                    indexer.reconcile(dimension, queried, harvested, grouped));
         }
 
         if (selected.isPresent()) {
@@ -333,7 +335,12 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
                             .filter(block -> block.type() == PlannedPortalBlock.Type.NETHER_PORTAL)
                             .map(PlannedPortalBlock::at)
                             .toList();
-                    PortalCandidateGrouper.group(portalBlocks).forEach(candidate -> indexer.insertDiscovered(dimension, candidate));
+                    List<PortalCandidate> discovered = PortalCandidateGrouper.group(portalBlocks);
+                    if (!discovered.isEmpty()) {
+                        // index write — database call, hop to async
+                        backend.schedulers().runAsync(() ->
+                                discovered.forEach(candidate -> indexer.insertDiscovered(dimension, candidate)));
+                    }
                 } catch (RuntimeException e) {
                     backend.diagnostics().accept("nether arrival: indexing the created portal failed ("
                             + e.getMessage() + ")");

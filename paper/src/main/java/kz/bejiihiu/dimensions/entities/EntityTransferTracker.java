@@ -114,9 +114,11 @@ public final class EntityTransferTracker {
     private void retireAll(TrackedAssembly assembly) {
         for (Entity entity : assembly.handles()) {
             try {
-                if (entity == null || !entity.isValid()) {
-                    continue;   // retired between our check and the schedule — nothing to do
+                if (entity == null) {
+                    continue;
                 }
+                // no isValid() here — the caller may be an async sweep and validity is entity
+                // access; the entity-scheduler lambda re-checks it in the right context anyway
                 backend.schedulers().runOn(entity, () -> {
                     try {
                         if (entity.isValid()) {

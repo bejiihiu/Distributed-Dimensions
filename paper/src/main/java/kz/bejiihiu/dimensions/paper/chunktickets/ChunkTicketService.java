@@ -5,7 +5,6 @@ import kz.bejiihiu.dimensions.paper.scheduler.RegionMath;
 import kz.bejiihiu.dimensions.paper.scheduler.Schedulers;
 import kz.bejiihiu.dimensions.paper.scheduler.TaskHandle;
 
-import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.plugin.Plugin;
 
@@ -71,8 +70,12 @@ public final class ChunkTicketService implements AutoCloseable {
         Objects.requireNonNull(plugin, "plugin");
         Objects.requireNonNull(settings, "settings");
         Consumer<String> sink = message -> plugin.getSLF4JLogger().warn("chunk-tickets: {}", message);
+        // not Bukkit.getCurrentTick(): on Folia the tick is maintained per region (and off a
+        // ticking region it throws), which would scramble the ledger's TTL bookkeeping. A
+        // monotonic nanoTime-derived counter gives every region the same timeline; at 20 TPS
+        // one tick is 50 ms, so the constants keep their vanilla meaning.
         return new ChunkTicketService(schedulers, new WorldChunkTicketGateway(plugin),
-                Bukkit::getCurrentTick, settings.enabled(), settings.ring(), sink);
+                () -> System.nanoTime() / 50_000_000L, settings.enabled(), settings.ring(), sink);
     }
 
     /** True when the service is enabled by configuration. A disabled service is a no-op. */
