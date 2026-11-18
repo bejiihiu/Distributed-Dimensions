@@ -7,6 +7,7 @@ plugins {
 }
 
 repositories {
+    maven("https://maven-central.storage-download.googleapis.com/maven2/")
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
     // HuskSync public compileOnly API artifact; never bundled into the jar.
