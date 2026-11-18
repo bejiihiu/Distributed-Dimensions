@@ -111,11 +111,11 @@ public final class TransferCoordinator {
             }
 
             ValidationOutcome verdict = validator.validate(message, source, dimensions);
-            if (verdict instanceof ValidationOutcome.Failed failed) {
+            if (verdict instanceof ValidationOutcome.Failed(TransferError error1, String reason)) {
                 operations.stats().validationFailures.incrementAndGet();
-                logger.warn("rejected transfer {} (source server '{}'): {}", rid, message.sourceServer(), failed.reason());
+                logger.warn("rejected transfer {} (source server '{}'): {}", rid, message.sourceServer(), reason);
                 sendResult(source, message.requestId(),
-                        TransferOutcome.failed(failed.error(), failed.reason()));
+                        TransferOutcome.failed(error1, reason));
                 return;
             }
 
@@ -130,6 +130,7 @@ public final class TransferCoordinator {
                 }
                 case REPLAY -> {
                     logger.debug("transfer {} already completed; replaying the cached outcome", rid);
+                    assert begin.replay() != null;
                     sendResult(source, message.requestId(), begin.replay());
                     return;
                 }

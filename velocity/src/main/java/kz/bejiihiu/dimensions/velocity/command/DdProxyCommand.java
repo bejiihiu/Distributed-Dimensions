@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * Native admin command for the proxy half: {@code /ddproxy status|reload|transfers [n]}.
@@ -84,7 +85,7 @@ public final class DdProxyCommand implements SimpleCommand {
         }
         if (args.length == 1) {
             String prefix = args[0].toLowerCase(Locale.ROOT);
-            return List.of("status", "reload", "transfers").stream()
+            return Stream.of("status", "reload", "transfers")
                     .filter(s -> s.startsWith(prefix))
                     .toList();
         }
@@ -191,10 +192,11 @@ public final class DdProxyCommand implements SimpleCommand {
         }
         DateTimeFormatter time = DateTimeFormatter.ISO_INSTANT;
         for (TransferOperations.RecentOperation op : ops) {
+            final String s = op.error() != null ? " " + op.error().wireName() : "";
             String result = switch (op.kind()) {
                 case SUCCESS -> "SUCCESS";
-                case FAILED -> "FAILED" + (op.error() != null ? " " + op.error().wireName() : "");
-                case ABANDONED -> "ABANDONED" + (op.error() != null ? " " + op.error().wireName() : "");
+                case FAILED -> "FAILED" + s;
+                case ABANDONED -> "ABANDONED" + s;
             };
             String line = time.format(op.finishedAt()) + "  " + op.requestId().toString().substring(0, 8)
                     + "  " + op.playerUuid() + "  " + op.sourceServer() + " -> " + op.targetServer()

@@ -142,7 +142,7 @@ public final class ArrivalEffectsService {
                     recent = services.journal().listRecent(JOURNAL_SCAN_LIMIT);
                 } catch (RuntimeException e) {
                     logger.debug("arrival attribution: journal unavailable ({}); skipping effects for {}",
-                            e.toString(), player.getUniqueId());
+                        e, player.getUniqueId());
                     return;
                 }
                 Optional<TransferOperation> row = ArrivalAttribution.select(

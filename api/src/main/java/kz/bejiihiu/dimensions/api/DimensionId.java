@@ -1,5 +1,7 @@
 package kz.bejiihiu.dimensions.api;
 
+import org.jspecify.annotations.NonNull;
+
 import java.util.Locale;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -62,7 +64,7 @@ public record DimensionId(String key) {
     }
 
     @Override
-    public String toString() {
+    public @NonNull String toString() {
         return key;
     }
 }

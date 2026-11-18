@@ -1,5 +1,6 @@
 package kz.bejiihiu.dimensions.api;
 
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -22,50 +23,50 @@ class DistributedDimensionsAPITest {
         // minimal working implementations so the fixture is behavioural, not a null-stub
         TransferManager transfers = new TransferManager() {
             @Override
-            public TransferResult transfer(org.bukkit.entity.Player player, DimensionId target) {
+            public @NonNull TransferResult transfer(org.bukkit.entity.@NonNull Player player, @NonNull DimensionId target) {
                 return TransferResult.failure(java.util.UUID.randomUUID(), TransferError.REJECTED, "test fixture");
             }
 
             @Override
-            public TransferResult transfer(org.bukkit.entity.Entity entity, DimensionId target) {
+            public @NonNull TransferResult transfer(org.bukkit.entity.@NonNull Entity entity, @NonNull DimensionId target) {
                 return TransferResult.failure(java.util.UUID.randomUUID(), TransferError.REJECTED, "test fixture");
             }
 
             @Override
-            public java.util.Optional<OperationState> status(java.util.UUID operationId) {
+            public java.util.@NonNull Optional<OperationState> status(java.util.@NonNull UUID operationId) {
                 return java.util.Optional.empty();
             }
         };
         DimensionRegistry dimensions = new DimensionRegistry() {
             @Override
-            public java.util.Optional<DimensionInfo> byServer(String server) {
+            public java.util.@NonNull Optional<DimensionInfo> byServer(String server) {
                 return java.util.Optional.empty();
             }
 
             @Override
-            public java.util.Optional<DimensionInfo> byDimension(DimensionId dimension) {
+            public java.util.@NonNull Optional<DimensionInfo> byDimension(DimensionId dimension) {
                 return java.util.Optional.empty();
             }
 
             @Override
-            public java.util.List<DimensionInfo> all() {
+            public java.util.@NonNull List<DimensionInfo> all() {
                 return java.util.List.of();
             }
         };
         PortalRegistry portals = entity -> false;
         return new DistributedDimensionsAPI() {
             @Override
-            public TransferManager transfers() {
+            public @NonNull TransferManager transfers() {
                 return transfers;
             }
 
             @Override
-            public DimensionRegistry dimensions() {
+            public @NonNull DimensionRegistry dimensions() {
                 return dimensions;
             }
 
             @Override
-            public PortalRegistry portals() {
+            public @NonNull PortalRegistry portals() {
                 return portals;
             }
         };

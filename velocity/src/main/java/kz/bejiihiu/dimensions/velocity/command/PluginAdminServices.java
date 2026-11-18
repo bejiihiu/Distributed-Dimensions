@@ -124,7 +124,7 @@ public final class PluginAdminServices implements DdProxyCommand.AdminServices {
             LoadReport report = configuration.report();
             if (report != null) {
                 details.add("source: " + sourceName(report.source()) + ", config-version " + report.configVersion());
-                report.notes().forEach(details::add);
+                details.addAll(report.notes());
             }
             return new DdProxyCommand.ReloadReport(false, details);
         }
@@ -133,7 +133,7 @@ public final class PluginAdminServices implements DdProxyCommand.AdminServices {
         List<String> details = new ArrayList<>();
         if (report != null) {
             details.add("source: " + sourceName(report.source()) + ", config-version " + report.configVersion());
-            report.notes().forEach(details::add);
+            details.addAll(report.notes());
             if (!report.warnings().isEmpty()) {
                 details.add("unknown keys ignored: " + String.join(", ", report.warnings()));
             }

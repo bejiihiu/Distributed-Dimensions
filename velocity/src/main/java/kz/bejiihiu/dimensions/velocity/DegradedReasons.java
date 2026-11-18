@@ -24,7 +24,7 @@ public final class DegradedReasons {
         for (int i = 0; i < raw.length(); i++) {
             char c = raw.charAt(i);
             if (c <= 0x20 || c == 0x7F || Character.isISOControl(c)) {
-                pendingSpace = out.length() > 0;
+                pendingSpace = !out.isEmpty();
                 continue;
             }
             if (pendingSpace) {
