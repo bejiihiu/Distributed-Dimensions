@@ -13,19 +13,25 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Minimal {@link Player} proxies for tests. Supports exactly the accessors the transfer
  * and respawn flows use: identity, online flag, mutable location (teleported through
- * {@code teleport}), and a recorded {@code sendMessage} log. Any other method throws
- * {@link UnsupportedOperationException} — a test tripping one is touching real server
- * state and must be rewritten.
+ * {@code teleport}/{@code teleportAsync}), and a recorded {@code sendMessage} log. Any
+ * other method throws {@link UnsupportedOperationException} — a test tripping one is
+ * touching real server state and must be rewritten.
  */
 public final class FakePlayers {
 
     private FakePlayers() {
     }
 
+    /** One recorded teleport request (sync or async). */
+    public record TeleportCall(Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause) {
+    }
+
     /** A proxy player with a deterministic identity. */
     public static Player create(UUID uuid, Location location, boolean online) {
         List<String> messages = new CopyOnWriteArrayList<>();
         MutableLocation current = new MutableLocation(location);
+        List<TeleportCall> teleports = new CopyOnWriteArrayList<>();
+        java.util.concurrent.atomic.AtomicBoolean teleportFailure = new java.util.concurrent.atomic.AtomicBoolean(false);
         InvocationHandler handler = (proxy, method, args) -> {
             switch (method.getName()) {
                 case "getUniqueId":
@@ -46,8 +52,27 @@ public final class FakePlayers {
                     return false;
                 case "teleport": {
                     Location to = (Location) args[0];
+                    org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause =
+                            args.length >= 2 && args[1] instanceof org.bukkit.event.player.PlayerTeleportEvent.TeleportCause c
+                                    ? c : org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.PLUGIN;
+                    teleports.add(new TeleportCall(to == null ? null : to.clone(), cause));
+                    if (teleportFailure.get()) {
+                        return false;
+                    }
                     current.set(to == null ? null : to.clone());
                     return true;
+                }
+                case "teleportAsync": {
+                    Location to = (Location) args[0];
+                    org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause =
+                            args.length >= 2 && args[1] instanceof org.bukkit.event.player.PlayerTeleportEvent.TeleportCause c
+                                    ? c : org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.PLUGIN;
+                    teleports.add(new TeleportCall(to == null ? null : to.clone(), cause));
+                    if (teleportFailure.get()) {
+                        return java.util.concurrent.CompletableFuture.completedFuture(Boolean.FALSE);
+                    }
+                    current.set(to == null ? null : to.clone());
+                    return java.util.concurrent.CompletableFuture.completedFuture(Boolean.TRUE);
                 }
                 case "sendMessage": {
                     if (args != null && args.length == 1 && args[0] != null) {
@@ -70,12 +95,28 @@ public final class FakePlayers {
                 Player.class.getClassLoader(), new Class<?>[] { Player.class }, handler);
         LOCATIONS.put(player, current);
         MESSAGES.put(player, messages);
+        TELEPORTS.put(player, teleports);
+        TELEPORT_FAILURES.put(player, teleportFailure);
         return player;
     }
 
     /** All messages sent to this proxy player, oldest first. */
     public static List<String> messages(Player player) {
         return List.copyOf(MESSAGES.getOrDefault(player, List.of()));
+    }
+
+    /** Recorded teleport requests (sync or async), oldest first. */
+    public static List<TeleportCall> teleportCalls(Player player) {
+        return List.copyOf(TELEPORTS.getOrDefault(player, List.of()));
+    }
+
+    /** Make every subsequent teleport (sync or async) report failure. Default: succeed. */
+    public static void setTeleportFailure(Player player, boolean failure) {
+        java.util.concurrent.atomic.AtomicBoolean flag = TELEPORT_FAILURES.get(player);
+        if (flag == null) {
+            throw new IllegalArgumentException("not a FakePlayers proxy");
+        }
+        flag.set(failure);
     }
 
     /** The current (mutable) location of this proxy player. */
@@ -88,6 +129,10 @@ public final class FakePlayers {
     private static final java.util.Map<Player, MutableLocation> LOCATIONS =
             new java.util.WeakHashMap<>();
     private static final java.util.Map<Player, List<String>> MESSAGES =
+            new java.util.WeakHashMap<>();
+    private static final java.util.Map<Player, List<TeleportCall>> TELEPORTS =
+            new java.util.WeakHashMap<>();
+    private static final java.util.Map<Player, java.util.concurrent.atomic.AtomicBoolean> TELEPORT_FAILURES =
             new java.util.WeakHashMap<>();
 
     private static final class MutableLocation {

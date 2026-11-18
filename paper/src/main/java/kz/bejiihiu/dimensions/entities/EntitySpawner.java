@@ -56,7 +56,8 @@ public final class EntitySpawner {
             }
         }
         boolean complete = spawned.stream().allMatch(java.util.Objects::nonNull);
-        return new SpawnOutcome(List.copyOf(spawned), complete);
+        // nulls mark skipped nodes — List.copyOf would NPE on them and take the ack down with it
+        return new SpawnOutcome(java.util.Collections.unmodifiableList(spawned), complete);
     }
 
     private static Entity spawnOne(World world, Location location, EntityNode node,

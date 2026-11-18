@@ -269,6 +269,10 @@ class TransferArrivalServiceTest {
         Location landed = FakePlayers.location(player);
         assertEquals(10.5, landed.getX());
         assertEquals(11.5, landed.getZ());
+        assertEquals(1, FakePlayers.teleportCalls(player).size());
+        assertEquals(10.5, FakePlayers.teleportCalls(player).get(0).location().getX());
+        assertEquals(org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.PLUGIN,
+                FakePlayers.teleportCalls(player).get(0).cause());
     }
 
     @Test
@@ -290,6 +294,40 @@ class TransferArrivalServiceTest {
         Location landed = FakePlayers.location(player);
         assertEquals(overworld.getSpawnLocation().getX(), landed.getX());
         assertEquals(1, backend.eventRecorder().completes().size());
+        assertEquals(1, FakePlayers.teleportCalls(player).size());
+        assertEquals(overworld.getSpawnLocation().getX(),
+                FakePlayers.teleportCalls(player).get(0).location().getX());
+    }
+
+    @Test
+    void teleportAsyncFailureKeepsPlayerInPlaceAndSettlesAnyway() {
+        // the teleport future reports false: the player must NOT be reported as moved —
+        // they keep their current position, the failure is logged, and the arrival settles
+        // exactly like the other "placement unavailable" shapes (op ends terminal-consistent)
+        UUID playerUuid = UUID.randomUUID();
+        Position bedPos = new Position(10.5, 64.0, 11.5, 90.0, 0.0);
+        backend.respawnStore().upsert(new RespawnPointRecord(playerUuid,
+                DimensionId.OVERWORLD, "world", bedPos, RespawnKind.BED, T0));
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.THE_END, DimensionId.OVERWORLD, bedPos);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 100.0, 64.0, 100.0, 0.0f, 0.0f), true);
+        claim(playerUuid);
+        FakePlayers.setTeleportFailure(player, true);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(4);
+
+        Location landed = FakePlayers.location(player);
+        assertEquals(100.0, landed.getX(), "player must keep the join position when the teleport fails");
+        assertEquals(100.0, landed.getZ());
+        assertEquals(1, FakePlayers.teleportCalls(player).size());
+        assertTrue(backend.diagnosticLog().stream().anyMatch(d ->
+                d.contains("teleport") && d.contains("placement unverified")));
+        // settles like the other can't-place shapes: CompleteEvent fires, op commits
+        assertEquals(1, backend.eventRecorder().completes().size());
+        assertEquals(OperationState.COMMITTED,
+                backend.journalFake().findById(op.operationId()).orElseThrow().state());
     }
 
     @Test

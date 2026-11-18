@@ -51,7 +51,9 @@ import java.util.function.Consumer;
  *       does the placement work run — a stored position that no longer passes validation
  *       falls back to world spawn (vanilla missing-respawn-block semantics); anything
  *       materially different from the join placement gets an explicit teleport. The sync
- *       wait never blocks a thread; it is bounded by the integration's own timeout.</li>
+ *       wait never blocks a thread; it is bounded by the integration's own timeout. The
+ *       placement teleport uses {@code teleportAsync}; finalization is chained strictly
+ *       after it settles (two entity-scheduler ticks from that point).</li>
  *   <li>Finalization — after sync readiness settles and two entity-scheduler ticks later,
  *       chunk tickets are applied, the journal row advances {@code TARGET_CREATED -> SOURCE_REMOVED ->
  *       COMMITTED} and {@code DimensionTransferCompleteEvent} is dispatched — but only by
@@ -375,8 +377,9 @@ public final class TransferArrivalService {
     }
 
     private void settle(ArrivalCompletion completion, Player player, ArrivalWorldLookup worlds) {
-        ArrivalCompletion verified = verifyAndFix(completion, player, worlds);
-        backend.schedulers().runOnDelayed(player, () -> finalize(verified, player), COMPLETE_EVENT_DELAY_TICKS);
+        verifyAndFix(completion, player, worlds, verified ->
+                backend.schedulers().runOnDelayed(player, () -> finalize(verified, player),
+                        COMPLETE_EVENT_DELAY_TICKS));
     }
 
     /**
@@ -478,11 +481,13 @@ public final class TransferArrivalService {
         return value.length() <= max ? value : value.substring(0, max);
     }
 
-    /** Package-visible for tests: teleport fallback logic without the join event. */
-    ArrivalCompletion verifyAndFix(ArrivalCompletion completion, Player player, ArrivalWorldLookup worlds) {
+    /** Package-visible for tests: placement logic; settles through {@code done}. */
+    void verifyAndFix(ArrivalCompletion completion, Player player, ArrivalWorldLookup worlds,
+                      Consumer<ArrivalCompletion> done) {
         Location target = completion.arrivalLocation();
         if (target == null) {
-            return completion;   // no recorded placement — keep the default join position
+            done.accept(completion);   // no recorded placement — keep the default join position
+            return;
         }
         World world = target.getWorld();
         Position pos = positionOf(target);
@@ -490,17 +495,18 @@ public final class TransferArrivalService {
             World respawn = worlds.respawnWorld();
             if (respawn != null) {
                 Location safe = respawn.getSpawnLocation();
-                player.teleport(safe, PlayerTeleportEvent.TeleportCause.PLUGIN);
                 backend.diagnostics().accept("stored respawn position for operation " + completion.operationId()
-                        + " is unusable; fell back to world spawn");
+                        + " is unusable; falling back to world spawn");
                 ArrivalCompletion fallback =
                         new ArrivalCompletion(completion.operationId(), completion.operation(), safe);
                 pending.put(player.getUniqueId(), fallback);   // keep finalize's identity check sound
-                return fallback;
+                teleportAndSettle(player, safe, fallback, done);
+                return;
             }
             backend.diagnostics().accept("validator rejected the stored position for operation "
                     + completion.operationId() + " but no respawn world resolves; leaving the player in place");
-            return completion;
+            done.accept(completion);
+            return;
         }
         Location here = player.getLocation();
         boolean sameWorld = here.getWorld() != null
@@ -512,9 +518,64 @@ public final class TransferArrivalService {
                 && wrapYaw(here.getYaw()) == wrapYaw(target.getYaw())
                 && here.getPitch() == target.getPitch();
         if (!sameSpot) {
-            player.teleport(target, PlayerTeleportEvent.TeleportCause.PLUGIN);
+            teleportAndSettle(player, target, completion, done);
+            return;
         }
-        return completion;
+        done.accept(completion);
+    }
+
+    /**
+     * Placement teleport via {@code teleportAsync} (the only legal teleport on Folia). The
+     * finalize step is chained strictly after the teleport settles — never on the hope two
+     * ticks are enough. A refused ({@code false}) or exceptional completion logs the fallback
+     * and settles anyway: the player keeps their current position and the placement is
+     * unverified — the same shape the validator-reject paths take, so the operation ends
+     * terminal-consistent instead of silently pretending the move happened.
+     */
+    private void teleportAndSettle(Player player, Location to, ArrivalCompletion completion,
+                                   Consumer<ArrivalCompletion> done) {
+        CompletableFuture<Boolean> teleported;
+        try {
+            teleported = player.teleportAsync(to, PlayerTeleportEvent.TeleportCause.PLUGIN);
+        } catch (RuntimeException | LinkageError error) {
+            // the platform refused the call itself — same shape as a false completion
+            logTeleportFailure(completion, to, error);
+            done.accept(completion);
+            return;
+        }
+        if (teleported == null) {
+            // defensive — a misbehaving wrapper may return null where the contract says non-null
+            logTeleportFailure(completion, to, null);
+            done.accept(completion);
+            return;
+        }
+        teleported.whenComplete((moved, error) -> {
+            try {
+                if (!Boolean.TRUE.equals(moved)) {
+                    logTeleportFailure(completion, to, error);
+                }
+                done.accept(completion);
+            } catch (RuntimeException | LinkageError e) {
+                // the continuation itself broke — finalization cannot be chained; the claim
+                // watchdog reconciles the row instead of a silent no-op
+                backend.severe().accept("arrival for operation " + completion.operationId()
+                        + " could not be finalized after teleport: " + e);
+            }
+        });
+    }
+
+    private void logTeleportFailure(ArrivalCompletion completion, Location to, Throwable error) {
+        Throwable cause = error == null ? null
+                : (error instanceof CompletionException && error.getCause() != null ? error.getCause() : error);
+        backend.diagnostics().accept("teleport for operation " + completion.operationId() + " to "
+                + describeLocation(to) + " failed" + (cause != null ? " (" + cause + ")" : "")
+                + "; the player keeps their current position — placement unverified, arrival settles anyway");
+    }
+
+    private static String describeLocation(Location location) {
+        World world = location.getWorld();
+        String worldName = world == null ? "<null>" : world.getName();
+        return worldName + "@(" + location.getX() + "," + location.getY() + "," + location.getZ() + ")";
     }
 
     /** Chunk tickets, journal transitions, Complete event. Runs on the entity's scheduler. */

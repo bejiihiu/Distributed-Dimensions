@@ -14,10 +14,14 @@ import org.bukkit.entity.Minecart;
 import org.bukkit.entity.Boat;
 import org.bukkit.plugin.Plugin;
 
+import org.jetbrains.annotations.Nullable;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+
+import kz.bejiihiu.dimensions.paper.scheduler.TaskHandle;
 
 /**
  * Target-side arrival: claims pending payload operations for this server, materializes the
@@ -36,14 +40,24 @@ public final class EntityArrivalService {
     private final EntityPlacementResolver placementResolver;
     private final PdcCooldownStore cooldowns;
     private final Clock clock;
+    private final java.util.function.Function<World.Environment, World> worldResolver;
 
     public EntityArrivalService(EntityBackend backend, EntityTransferMetrics metrics,
             Plugin plugin, Clock clock) {
+        this(backend, metrics, plugin, clock,
+                environment -> EntityWorldResolver.forEnvironment(environment).orElse(null));
+    }
+
+    /** Wiring seam for the destination world lookup — registry-level, no world state. */
+    public EntityArrivalService(EntityBackend backend, EntityTransferMetrics metrics,
+            Plugin plugin, Clock clock,
+            java.util.function.Function<World.Environment, World> worldResolver) {
         this.backend = backend;
         this.metrics = metrics;
         this.placementResolver = new EntityPlacementResolver(backend, metrics);
         this.cooldowns = new PdcCooldownStore(plugin);
         this.clock = clock;
+        this.worldResolver = java.util.Objects.requireNonNull(worldResolver, "worldResolver");
     }
 
     // ------------------------------------------------------------------ claim paths
@@ -160,23 +174,84 @@ public final class EntityArrivalService {
             metrics.increment(EntityTransferMetrics.OP_FAILED);
             return false;
         }
-        boolean destinationIsNether = destination.getEnvironment() == World.Environment.NETHER;
+        // pure Location math only — no world access here; the chunk decides the owning region
         Location hint = hintLocation(destination, arrival);
+        if (hint == null) {
+            backend.diagnostics().accept("entity op " + opId + " rejected: non-finite arrival coordinates");
+            failQuietly(opId);
+            metrics.increment(EntityTransferMetrics.OP_FAILED);
+            return false;
+        }
 
-        // placement decisions (POI search, portal creation, block placement) all live on
-        // the region thread of the hint chunk
-        backend.schedulers().runOnRegion(hint, () -> placementResolver.resolve(
-                destination, arrival, destinationIsNether,
+        // per-op work (POI scan, exit math, spawn) runs inside the region owning the hint chunk
+        EntityNode rootNode = root;
+        TaskHandle regionHop;
+        try {
+            regionHop = backend.schedulers().runOnRegion(hint,
+                    () -> settleInRegion(opId, destination, graph, arrival, rootNode));
+        } catch (RuntimeException e) {
+            backend.diagnostics().accept("entity op " + opId + ": destination region task was refused: " + e.getMessage());
+            failQuietly(opId);
+            metrics.increment(EntityTransferMetrics.OP_FAILED);
+            return false;
+        }
+        if (regionHop == null) {
+            // the hop never happened — rows become FAILED (never deleted), the source retracts
+            backend.diagnostics().accept("entity op " + opId
+                    + ": destination region scheduler returned no task handle; rows marked FAILED");
+            failQuietly(opId);
+            metrics.increment(EntityTransferMetrics.OP_FAILED);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Destination-side work on the region thread owning the hint chunk. All world state
+     * the placement pipeline touches (POI search, border, spawn location, creation plan
+     * reads) runs from here.
+     */
+    private void settleInRegion(String opId, World destination,
+            List<EntityNode> graph, JsonObject arrival, EntityNode root) {
+        boolean destinationIsNether = destination.getEnvironment() == World.Environment.NETHER;
+        placementResolver.resolve(destination, arrival, destinationIsNether,
                 FieldCodec.velocity(root.fields().getAsJsonObject("velocity")),
                 FieldCodec.getDouble(root.fields(), "yaw", 0.0),
                 FieldCodec.getDouble(root.fields(), "pitch", 0.0),
-                placement -> spawnAssembly(opId, destination, placement, graph, arrival)));
-        return true;
+                placement -> spawnAssembly(opId, destination, placement, graph, arrival));
     }
 
     private void spawnAssembly(String opId, World world, EntityPlacement placement,
             List<EntityNode> graph, JsonObject arrival) {
-        boolean zeroForward = FieldCodec.getBoolean(arrival, "zeroForward", true);
+        // the spawn must land on the region owning the placement chunk — the placement may
+        // come from the portal-creation callback (portal-origin region) or from a fixed
+        // anchor (end platform), so hop explicitly instead of spawning inline
+        TaskHandle spawnHop;
+        try {
+            spawnHop = backend.schedulers().runOnRegion(placement.location(),
+                    () -> spawnInPlace(opId, world, placement, graph, arrival));
+        } catch (RuntimeException e) {
+            failSpawnHop(opId, "destination region task for the placement chunk was refused: " + e.getMessage());
+            return;
+        }
+        if (spawnHop == null) {
+            failSpawnHop(opId, "destination region scheduler returned no task handle for the placement chunk");
+        }
+    }
+
+    /**
+     * The region hop for the spawn failed — the assembly never went into the world and the
+     * rows are never deleted (source retracts on its own timeout). The DB write hops back
+     * to async; a region thread never blocks on storage.
+     */
+    private void failSpawnHop(String opId, String reason) {
+        backend.diagnostics().accept("entity op " + opId + ": " + reason + "; rows marked FAILED");
+        metrics.increment(EntityTransferMetrics.OP_FAILED);
+        backend.schedulers().runAsync(() -> failQuietly(opId));
+    }
+
+    private void spawnInPlace(String opId, World world, EntityPlacement placement,
+            List<EntityNode> graph, JsonObject arrival) {
         EntitySpawner.SpawnOutcome outcome;
         try {
             outcome = EntitySpawner.spawnGraph(world, placement.location(), graph, metrics);
@@ -264,7 +339,7 @@ public final class EntityArrivalService {
         }
     }
 
-    private static World resolveWorld(String targetDimension) {
+    private World resolveWorld(String targetDimension) {
         DimensionId dimension = DimensionId.of(targetDimension);
         World.Environment environment;
         if (dimension.equals(DimensionId.NETHER)) {
@@ -274,13 +349,21 @@ public final class EntityArrivalService {
         } else {
             environment = World.Environment.NORMAL;
         }
-        return EntityWorldResolver.forEnvironment(environment).orElse(null);
+        // registry-level lookup (worlds are global metadata) — no block/POI state touched
+        return worldResolver.apply(environment);
     }
 
-    private static Location hintLocation(World world, JsonObject arrival) {
+    private static @Nullable Location hintLocation(World world, JsonObject arrival) {
         double x = FieldCodec.getDouble(arrival, "x", 100.5);
         double y = FieldCodec.getDouble(arrival, "y", 49.0);
         double z = FieldCodec.getDouble(arrival, "z", 0.5);
-        return new Location(world, x, Math.max(world.getMinHeight(), Math.min(world.getMaxHeight(), y)), z);
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            // corrupt payload — NaN/Infinity coordinates reject the op instead of
+            // routing the region scheduler off garbage
+            return null;
+        }
+        // y is irrelevant to region routing (chunking uses x/z); the Location rides along
+        // purely so the scheduler lands on the right region
+        return new Location(world, x, y, z);
     }
 }
