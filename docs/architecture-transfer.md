@@ -242,8 +242,6 @@ the transfer — it only redirects placement.
 - `portals.end.enabled` — when false, the end portal handler cancels the event and refuses
   (never lets vanilla fall through to a same-server endpoint).
 - `entities.cross-server-transfer.chunk-tickets.{enabled,ring}` — arrival chunk tickets.
-- `debug.transfers` — reserved (orchestration logs are info-level and sparse; no
-  per-transfer spam by default).
 
 ## What the Nether wave plugs in
 

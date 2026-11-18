@@ -76,7 +76,7 @@ Notes:
    for the active database branch → collect unknown keys as warnings.
 2. Compares the freshly loaded snapshot against the **running** snapshot and reports which
    top-level sections changed (`general`, `network`, `portals`, `entities`, `api`, `sync`,
-   `redis`, `database`, `debug`, `mirage`, `config-version`).
+   `database`, `mirage`, `config-version`).
 3. Applies **exactly one key** live: `general.language` — the message bundle is
    re-selected, so the very next `/dd` output is in the new language.
 4. Nothing else is applied. The backend's services are constructor-wired at boot; a fake

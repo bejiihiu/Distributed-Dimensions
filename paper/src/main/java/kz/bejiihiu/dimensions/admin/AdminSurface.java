@@ -1,8 +1,6 @@
 package kz.bejiihiu.dimensions.admin;
 
-import kz.bejiihiu.dimensions.common.config.ConfigurationService;
-import kz.bejiihiu.dimensions.common.config.LoadReport;
-import kz.bejiihiu.dimensions.common.config.PluginConfig;
+import kz.bejiihiu.dimensions.common.config.*;
 import kz.bejiihiu.dimensions.common.model.DimensionId;
 import kz.bejiihiu.dimensions.mirage.MirageService;
 import kz.bejiihiu.dimensions.mirage.MirageWorld;
@@ -78,40 +76,22 @@ public final class AdminSurface {
 
     // ------------------------------------------------------------------ production backend
 
-    private static final class ProductionServices implements DdCommand.Services {
-
-        private final JavaPlugin plugin;
-        private final PaperServices services;
-        private final ConfigurationService configService;
-        private final MirageService mirageService;
-        private final SyncServices syncServices;
-        private final Messages messages;
-        private final long enabledAtMillis;
-
-        private ProductionServices(JavaPlugin plugin, PaperServices services,
-                                   ConfigurationService configService, MirageService mirageService,
-                                   SyncServices syncServices, Messages messages, long enabledAtMillis) {
-            this.plugin = plugin;
-            this.services = services;
-            this.configService = configService;
-            this.mirageService = mirageService;
-            this.syncServices = syncServices;
-            this.messages = messages;
-            this.enabledAtMillis = enabledAtMillis;
-        }
+    private record ProductionServices(JavaPlugin plugin, PaperServices services, ConfigurationService configService,
+                                      MirageService mirageService, SyncServices syncServices, Messages messages,
+                                      long enabledAtMillis) implements DdCommand.Services {
 
         @Override
-        public AdminInfo info() {
-            try {
-                PluginConfig running = services.config();
-                HealthReport health = services.health();
-                List<AdminInfo.DimensionRoute> routes = new ArrayList<>();
-                for (Map.Entry<DimensionId, kz.bejiihiu.dimensions.common.config.DimensionTarget> entry
+            public AdminInfo info() {
+                try {
+                    PluginConfig running = services.config();
+                    HealthReport health = services.health();
+                    List<AdminInfo.DimensionRoute> routes = new ArrayList<>();
+                    for (Map.Entry<DimensionId, DimensionTarget> entry
                         : services.dimensions().routes().entrySet()) {
-                    routes.add(new AdminInfo.DimensionRoute(entry.getKey().toString(), entry.getValue().server()));
-                }
-                LoadReport report = configService.report();
-                return new AdminInfo(
+                        routes.add(new AdminInfo.DimensionRoute(entry.getKey().toString(), entry.getValue().server()));
+                    }
+                    LoadReport report = configService.report();
+                    return new AdminInfo(
                         plugin.getPluginMeta().getVersion(),
                         Bukkit.getVersion(),
                         health.status().name(),
@@ -137,9 +117,9 @@ public final class AdminSurface {
                         running.api().compat().fireSyntheticEvents(),
                         running.api().compat().grantAdvancements(),
                         Math.max(0, System.currentTimeMillis() - enabledAtMillis));
-            } catch (RuntimeException e) {
-                // An info probe must never take the command down; report it as degraded data.
-                return new AdminInfo(
+                } catch (RuntimeException e) {
+                    // An info probe must never take the command down; report it as degraded data.
+                    return new AdminInfo(
                         plugin.getPluginMeta().getVersion(),
                         Bukkit.getVersion(),
                         HealthReport.Status.DEGRADED.name(),
@@ -150,31 +130,31 @@ public final class AdminSurface {
                         null, "UNAVAILABLE", false,
                         false, false, false,
                         Math.max(0, System.currentTimeMillis() - enabledAtMillis));
+                }
             }
-        }
 
-        @Override
-        public ReloadOutcome reload() {
-            PluginConfig running = services.config();
-            try {
-                PluginConfig reloaded = configService.load();
-                LoadReport report = configService.report();
-                if (!configService.isHealthy()) {
-                    String reason = configService.health()
-                            .map(kz.bejiihiu.dimensions.common.config.ConfigurationException::getMessage)
+            @Override
+            public ReloadOutcome reload() {
+                PluginConfig running = services.config();
+                try {
+                    PluginConfig reloaded = configService.load();
+                    LoadReport report = configService.report();
+                    if (!configService.isHealthy()) {
+                        String reason = configService.health()
+                            .map(ConfigurationException::getMessage)
                             .orElse("configuration fell back to a non-clean state");
-                    return ReloadOutcome.failure(
+                        return ReloadOutcome.failure(
                             report == null ? -1 : report.configVersion(),
                             report == null ? "unknown" : report.source().name(),
                             reason);
-                }
-                ConfigDelta.Result delta = ConfigDelta.diff(running, reloaded);
-                String newLanguage = null;
-                if (delta.languageChanged()) {
-                    messages.select(reloaded.general().language());
-                    newLanguage = reloaded.general().language();
-                }
-                return new ReloadOutcome(true,
+                    }
+                    ConfigDelta.Result delta = ConfigDelta.diff(running, reloaded);
+                    String newLanguage = null;
+                    if (delta.languageChanged()) {
+                        messages.select(reloaded.general().language());
+                        newLanguage = reloaded.general().language();
+                    }
+                    return new ReloadOutcome(true,
                         report == null ? reloaded.configVersion() : report.configVersion(),
                         report == null ? "unknown" : report.source().name(),
                         delta.changedSections(),
@@ -184,49 +164,49 @@ public final class AdminSurface {
                         report == null ? -1 : report.migratedTo(),
                         report == null ? List.of() : report.warnings(),
                         null);
-            } catch (RuntimeException e) {
-                return ReloadOutcome.failure(running.configVersion(), "unknown",
+                } catch (RuntimeException e) {
+                    return ReloadOutcome.failure(running.configVersion(), "unknown",
                         "reload re-scan failed: " + e.getMessage());
-            }
-        }
-
-        @Override
-        public MirageInfo mirages() {
-            try {
-                if (!mirageService.enabled()) {
-                    return new MirageInfo(false, List.of(), List.of());
                 }
-                List<MirageInfo.Entry> entries = new ArrayList<>();
-                for (MirageWorld world : mirageService.mirages()) {
-                    entries.add(new MirageInfo.Entry(world.name(), world.environment().name(),
+            }
+
+            @Override
+            public MirageInfo mirages() {
+                try {
+                    if (!mirageService.enabled()) {
+                        return new MirageInfo(false, List.of(), List.of());
+                    }
+                    List<MirageInfo.Entry> entries = new ArrayList<>();
+                    for (MirageWorld world : mirageService.mirages()) {
+                        entries.add(new MirageInfo.Entry(world.name(), world.environment().name(),
                             world.dimension().toString(), world.createdByPlugin()));
+                    }
+                    return new MirageInfo(true, entries, mirageService.failures());
+                } catch (RuntimeException e) {
+                    return new MirageInfo(true, List.of(), List.of("mirage registry probe failed: " + e.getMessage()));
                 }
-                return new MirageInfo(true, entries, mirageService.failures());
-            } catch (RuntimeException e) {
-                return new MirageInfo(true, List.of(), List.of("mirage registry probe failed: " + e.getMessage()));
             }
-        }
 
-        private String syncStrategy() {
-            if (syncServices == null) {
-                return null;
+            private String syncStrategy() {
+                if (syncServices == null) {
+                    return null;
+                }
+                try {
+                    return syncServices.integration().id();
+                } catch (RuntimeException e) {
+                    return null;
+                }
             }
-            try {
-                return syncServices.integration().id();
-            } catch (RuntimeException e) {
-                return null;
-            }
-        }
 
-        private String syncPhase() {
-            if (syncServices == null) {
-                return "UNAVAILABLE";
-            }
-            try {
-                return syncServices.readiness().name();
-            } catch (RuntimeException e) {
-                return "UNAVAILABLE";
+            private String syncPhase() {
+                if (syncServices == null) {
+                    return "UNAVAILABLE";
+                }
+                try {
+                    return syncServices.readiness().name();
+                } catch (RuntimeException e) {
+                    return "UNAVAILABLE";
+                }
             }
         }
-    }
 }

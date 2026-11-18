@@ -341,12 +341,12 @@ not exist and never will.
 - **Dragon fight, end gateways, outer islands are out of scope by design** — native to the
   End backend; no plugin code, no plugin tests; verified by the admin test loop
   (`docs/installation.md` checklist), exactly as you would verify any vanilla End server.
-- **Configuration carries documented-no-effect keys under review**: `general.strict-vanilla-mode`,
-  `portals.nether.preserve-vanilla-{delay,search,creation,orientation}`, and
-  `network.transfer.max-retries` are parsed but nothing branches on them (the vanilla gamerules
-  are the supported dwell lever; the search/creation **is** the vanilla algorithm). A separate
-  cleanup branch is handling this; until it lands, treat them as inert — see
-  `docs/configuration.md` and `docs/limitations.md`.
+- **Configuration carries no no-op keys**: fictional keys from earlier builds (`general.strict-vanilla-mode`,
+  `portals.nether.preserve-vanilla-*`, `network.transfer.max-retries`, `debug.*`, `redis`,
+  `network.proxy.enabled`) were dropped from the schema (config-version 4) and are rejected/healed
+  by the migration on load. The behavioural levers that remain are real: gamerules for the portal
+  dwell, the vanilla search/creation algorithm itself. See `docs/configuration.md` and
+  `docs/limitations.md`.
 
 ## Build & release overview
 

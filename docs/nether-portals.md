@@ -317,17 +317,15 @@ gamerules added by other plugins are irrelevant to this flow.
 `portals.nether.enabled` gates the feature exactly like `portals.end.enabled` gates the end
 portals: disabled → cancelled event + refusal message, never a same-server fall-through.
 
-The `preserve-vanilla-delay`, `preserve-vanilla-search`, `preserve-vanilla-creation` and
-`preserve-vanilla-orientation` keys (schema, frozen) are **accepted but have no effect** in
-this wave:
+There is no `preserve-vanilla-*` family of switches anymore (they were dropped from the
+schema in config-version 4):
 
 - the delay is always vanilla's (set the gamerules to `0` for instant transitions);
 - the search **is** the vanilla algorithm (a 1:1 port of the Java Edition source, in
   `kz.bejiihiu.dimensions.common.nether`);
-- creation is implemented, and it is the vanilla algorithm - a `false` switch has no
-  alternative implementation to switch to;
-- the created portal's orientation always uses the source default axis (`X_AXIS`) until the
-  wire can carry the source orientation (protocol v1, frozen).
+- the created portal's orientation uses the source default axis (`X_AXIS`) until the wire can
+  carry the source orientation (protocol v1, frozen; the source axis *is* carried via the
+  v4 context table for exit math, just not across the wire for placement).
 
 ## Known limitations / decisions
 
@@ -339,7 +337,9 @@ this wave:
   128-block radius) exceeds the budget when the index is empty; portals there are found
   only if the spiral scan reaches them. With a healthy database this converges after a few
   arrivals as the index fills; in degraded mode the scan is unlimited (full square).
-- **No source orientation/hitbox across the wire** - see above.
+- **Source axis and source fractions do not ride the wire** — they travel in the v4
+  `transfer_contexts` table instead (protocol v1, frozen); a context row is written on the
+  source and claimed on the target, see "Source-relative placement" below.
 - **Pre-switch border approximation** - default bounds only; see above.
 - **Chunk-load failure during search/build** - the player keeps the journal placement (never
   an invented portal); the arrival still completes and the next pass re-scans.
