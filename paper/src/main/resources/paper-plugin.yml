@@ -1,4 +1,4 @@
-name: Distributed Dimensions
+name: DistributedDimensions
 # Non-ASCII must stay literal here: expand() reads the file in platform
 # encoding and mangles it. Only the ASCII version placeholder goes through it.
 description: Paper/Folia + Velocity plugin that distributes the three Minecraft dimensions across independent backend servers.

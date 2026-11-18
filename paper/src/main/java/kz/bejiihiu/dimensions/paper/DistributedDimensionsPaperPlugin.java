@@ -9,6 +9,12 @@ import kz.bejiihiu.dimensions.common.model.DimensionId;
 import kz.bejiihiu.dimensions.common.persistence.DimensionPersistence;
 import kz.bejiihiu.dimensions.common.persistence.PersistenceFactory;
 import kz.bejiihiu.dimensions.common.persistence.PersistenceSettings;
+import kz.bejiihiu.dimensions.compat.ApiBridge;
+import kz.bejiihiu.dimensions.compat.ArrivalEffectsService;
+import kz.bejiihiu.dimensions.interop.ChannelCrossServerTransfer;
+import kz.bejiihiu.dimensions.interop.CrossServerTransfer;
+import kz.bejiihiu.dimensions.mirage.MirageGuard;
+import kz.bejiihiu.dimensions.mirage.MirageService;
 import kz.bejiihiu.dimensions.paper.chunktickets.ChunkTicketService;
 import kz.bejiihiu.dimensions.paper.scheduler.PlatformSchedulers;
 import kz.bejiihiu.dimensions.paper.scheduler.Schedulers;
@@ -25,9 +31,12 @@ import java.util.Optional;
 /**
  * Entry point of the Paper/Folia backend plugin.
  *
- * <p>Boot order is deliberate: configuration first (everything else reads it), then
- * persistence (schema migrations run inside {@link PersistenceFactory#open} — never
- * against a half-open pool), then the services holder. When any stage fails the
+ * <p>Boot order is deliberate: configuration first (everything else reads it), then mirage
+ * worlds (void stubs for dimensions this backend does not host — they must exist before any
+ * world-touching service), then persistence (schema migrations run inside
+ * {@link PersistenceFactory#open} — never against a half-open pool), then the services holder;
+ * finally the cross-server interop (transfer channel + pending-operation map), the mirage
+ * guards, the arrival effects, and the public api registration. When any stage fails the
  * plugin <em>stays enabled</em> and enters a fail-closed state: {@link PaperServices}
  * reports {@link HealthReport.Status#DEGRADED} with the reasons, and accessors for
  * persistence throw instead of returning unmigrated state. Later waves must refuse
@@ -37,6 +46,7 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
 
     private PaperServices services;
     private SyncServices syncServices;
+    private ApiBridge apiBridge;
 
     @Override
     public void onEnable() {
@@ -63,6 +73,12 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
         Optional<String> configFailure = configService.health()
                 .map(error -> SecretsRedactor.redact(error.getMessage()));
         logConfigSummary(logger, configService.report(), configHealthy);
+
+        // --- stage 1.5: mirage worlds (void stubs for dimensions this backend does not host) ---
+        // Needs the loaded config (names, fixed-time), so it can not be the literal first call,
+        // but it still runs before every world-touching service (persistence, schedulers, API).
+        // Failures are logged SEVERE inside and never abort boot.
+        MirageService mirageService = MirageService.createMissingMirages(this, config, logger);
 
         // --- stage 2: dimensions routing (never throws, degraded via reasons) ---
         DimensionResolver dimensions = DimensionResolver.from(config.network().dimensions());
@@ -111,6 +127,12 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
                     e.toString());
         }
 
+        // --- stage 6: interop + mirage guards + arrival effects + public api -----
+        CrossServerTransfer executor = new ChannelCrossServerTransfer(this, services);
+        MirageGuard.register(this, mirageService, services, executor);
+        ArrivalEffectsService.registerIfEnabled(this, services);
+        this.apiBridge = ApiBridge.registerIfEnabled(this, services, executor);
+
         if (!services.isHealthy()) {
             logger.error("SEVERE: backend is DEGRADED — {}. Later waves must refuse transfers.",
                     String.join(" | ", services.health().reasons()));
@@ -123,6 +145,12 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         Logger logger = getSLF4JLogger();
+        // unregister the public api before anything else tears down the services behind it
+        ApiBridge bridge = apiBridge;
+        apiBridge = null;
+        if (bridge != null) {
+            bridge.unregister();
+        }
         PaperServices current = services;
         services = null;
         SyncServices currentSync = syncServices;
