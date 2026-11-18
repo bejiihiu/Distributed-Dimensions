@@ -119,13 +119,12 @@ public final class ChannelCrossServerTransfer implements CrossServerTransfer, Pl
                     "backend is degraded; transfers are refused");
         }
 
-        String sourceServer = SourceServerName.resolve();
+        String sourceServer = SourceServerName.resolve(services.config().network().sourceServer());
         if (sourceServer == null) {
             refused.increment();
             logger.error("SEVERE: refusing transfer of player {} (target {}): the backend does not know its "
-                            + "own server name (set -D{}=<name> or {}) — the proxy would reject the request anyway",
-                    player.getUniqueId(), command.targetDimension(),
-                    SourceServerName.SYSTEM_PROPERTY, SourceServerName.ENV_VAR);
+                            + "own server name (set network.source-server in config.yml, or {} / {})",
+                    player.getUniqueId(), command.targetDimension(), SourceServerName.ENV_VAR, SourceServerName.SYSTEM_PROPERTY);
             return TransferResult.failure(operationId, kz.bejiihiu.dimensions.api.TransferError.UNAVAILABLE,
                     "backend does not know its proxy server name (see logs)");
         }
