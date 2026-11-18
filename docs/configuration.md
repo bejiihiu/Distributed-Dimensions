@@ -46,8 +46,10 @@ Secrets are never printed: `DatabaseSettings.toString()` renders the password as
 and strips `user:pass@` credentials embedded in URLs. Exception messages name variables,
 not values. Everything else in this file is treated as non-secret.
 
-Local dev: `password: ""` means "no credentials" (local trust-auth MySQL). Real
-deployments should use `password: "${DB_PASSWORD}"` (the shipped default).
+Local dev: `password: ""` means "no credentials" (local trust-auth MySQL). An explicit
+empty string is kept exactly as written — it is not healed back to the shipped default,
+and no `${VAR}` expansion is applied to it. Real deployments should use
+`password: "${DB_PASSWORD}"` (the shipped default).
 
 ## `config-version` and schema evolution
 

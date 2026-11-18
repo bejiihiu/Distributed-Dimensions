@@ -181,8 +181,11 @@ final class Nodes {
 
     /**
      * Produces the healed tree: user values on top, defaults filling the gaps.
-     * Configurate's {@code mergeFrom} fills the receiver's missing/null values from the
-     * argument — so the (pruned) user tree is the receiver and the defaults are the source.
+     * Missing keys (virtual or explicitly-null nodes) are filled from the defaults;
+     * present user values always win. Note: Configurate's {@code mergeFrom} is not
+     * used — it treats an empty-string scalar as empty and would overwrite a
+     * deliberate {@code password: ""} with the bundled default, so the fill is
+     * done by {@link #mergeMissing}, which only honors the absent case.
      * Throws when {@link Plan#structuralErrors()} is non-empty.
      */
     static CommentedConfigurationNode heal(CommentedConfigurationNode defaults, CommentedConfigurationNode user,
@@ -194,8 +197,37 @@ final class Nodes {
         for (List<String> unknownPath : plan.unknownPaths()) {
             remove(healed, unknownPath);
         }
-        healed.mergeFrom(defaults);
+        mergeMissing(healed, defaults);
         return healed;
+    }
+
+    /**
+     * Fills absent nodes in {@code target} from {@code source}, recursing into sections.
+     * A node is absent when it is virtual (key never written) or carries an explicit
+     * null ({@code key:} with no value) — mirroring the "absent" notion in
+     * {@link #analyze}. An empty string is a present, meaningful value (e.g.
+     * {@code password: ""} = no credentials) and is never overwritten.
+     */
+    private static void mergeMissing(CommentedConfigurationNode target, CommentedConfigurationNode source) {
+        if (isAbsent(target)) {
+            // key never written (or explicit null) — take the whole subtree from the defaults
+            if (!source.virtual()) {
+                target.from(source);
+            }
+            return;
+        }
+        if (!source.isMap() || !target.isMap()) {
+            // present user value wins; a non-map target means analyze() already rejected the shape
+            return;
+        }
+        for (Map.Entry<Object, ? extends ConfigurationNode> entry : source.childrenMap().entrySet()) {
+            String key = String.valueOf(entry.getKey());
+            mergeMissing(target.node(key), (CommentedConfigurationNode) entry.getValue());
+        }
+    }
+
+    private static boolean isAbsent(ConfigurationNode node) {
+        return node == null || node.virtual() || node.raw() == null;
     }
 
     private static void remove(CommentedConfigurationNode root, List<String> path) {

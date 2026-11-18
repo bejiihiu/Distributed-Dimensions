@@ -309,6 +309,69 @@ class ConfigurationServiceTest {
     }
 
     @Test
+    void explicitEmptyPasswordSurvivesHealAndLoad() throws Exception {
+        // a deliberate "no credentials" marker must not be healed back to the bundled ${DB_PASSWORD}
+        write("config-version: 3\ndatabase:\n  password: \"\"\n");
+        ConfigurationService service = newService();
+
+        PluginConfig config = service.load();
+
+        assertTrue(service.isHealthy(), "explicit empty password must not fail load: " + service.health());
+        assertEquals(null, config.database().password(), "empty string = no credentials");
+    }
+
+    @Test
+    void explicitEmptyPasswordLoadsWithDatabasePasswordEnvUnset() throws Exception {
+        // the bundled default references DB_PASSWORD; an explicit "" must bypass expansion entirely
+        write("config-version: 3\ndatabase:\n  password: \"\"\n");
+        ConfigurationService service = new ConfigurationService(
+                Environment.resolve(dir), EnvLookup.fixed(Map.of()));
+
+        PluginConfig config = service.load();
+
+        assertTrue(service.isHealthy(), "explicit empty password must not need DB_PASSWORD: " + service.health());
+        assertEquals(null, config.database().password());
+    }
+
+    @Test
+    void missingPasswordKeyStillHealsToBundledDefault() throws Exception {
+        write("config-version: 3\ndatabase:\n  username: \"someone\"\n");
+        ConfigurationService service = newService();
+
+        PluginConfig config = service.load();
+
+        assertTrue(service.isHealthy());
+        assertEquals("test-password", config.database().password(),
+                "a missing key must be healed from the bundled default and expanded");
+    }
+
+    @Test
+    void healFromBundledDefaultsUnchangedForFreshBootStyleFiles() throws Exception {
+        // a v3 file with no database section at all heals every key from the bundled defaults
+        write("config-version: 3\n");
+        ConfigurationService service = newService();
+
+        PluginConfig config = service.load();
+
+        assertTrue(service.isHealthy());
+        assertEquals("test-password", config.database().password(),
+                "healing from the bundled defaults must behave exactly as before");
+        assertEquals("mysql", config.database().type().id());
+    }
+
+    @Test
+    void unsetEnvVarWithBundledDefaultPasswordStillHardFails() throws Exception {
+        // env without DB_PASSWORD: the healed default cannot be expanded — fails as before
+        write("config-version: 3\n");
+        ConfigurationService service = new ConfigurationService(
+                Environment.resolve(dir), EnvLookup.fixed(Map.of()));
+
+        ConfigurationException thrown = assertThrows(ConfigurationException.class, service::load);
+        assertTrue(thrown.getMessage().contains("DB_PASSWORD"),
+                "failure must name the missing variable: " + thrown.getMessage());
+    }
+
+    @Test
     void emptyFileHealsToFullDefaultsAndIsSaved() throws Exception {
         write("");
         ConfigurationService service = newService();
