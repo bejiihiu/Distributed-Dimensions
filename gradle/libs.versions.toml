@@ -7,6 +7,19 @@ paper-api = "26.3.build.+"
 # Требует Java 25 в рантайме, что совпадает с нашим тулчейном.
 velocity-api = "4.2.0"
 
+# wire-протокол: одна библиотека сериализации, выверена обеими платформами
+# (paper-api и velocity-api оба тащат тот же gson 2.14.0, compile scope),
+# бандлим и релоцируем для детерминизма на обеих платформах.
+gson = "2.14.0"
+# Персистентность (состояние самого плагина). JDBC-драйвера — runtime-зависимости,
+# бандлятся в оба jar'а с релокацией; админу ничего не нужно доносить.
+hikaricp = "7.1.0"
+mongodb-driver = "5.14.0"
+mysql-connector = "26.10.0"
+mariadb-client = "4.0.0"
+postgresql = "42.7.14"
+h2 = "2.5.252"
+
 # Общие библиотеки. Adventure 5 предоставляется обеими платформами в рантайме
 # (Paper 26.x и Velocity 4.x), поэтому в common/api идёт как api-зависимость
 # для компиляции, но из shade-бандлов вырезается.
@@ -51,6 +64,15 @@ annotations = { module = "org.jetbrains:annotations", version.ref = "annotations
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
+mongodb-driver-sync = { module = "org.mongodb:mongodb-driver-sync", version.ref = "mongodb-driver" }
+mysql-connector = { module = "com.mysql:mysql-connector-j", version.ref = "mysql-connector" }
+mariadb-client = { module = "org.mariadb.jdbc:mariadb-java-client", version.ref = "mariadb-client" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+h2 = { module = "com.h2database:h2", version.ref = "h2" }
 
 [plugins]
 shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }

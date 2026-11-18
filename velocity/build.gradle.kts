@@ -44,6 +44,13 @@ tasks {
         relocate("org.yaml.snakeyaml", "kz.bejiihiu.dimensions.libs.snakeyaml")
         relocate("io.leangen.geantyref", "kz.bejiihiu.dimensions.libs.geantyref")
         relocate("org.incendo.cloud", "kz.bejiihiu.dimensions.libs.cloud")
+        relocate("com.google.gson", "kz.bejiihiu.dimensions.libs.gson")
+        relocate("com.zaxxer.hikari", "kz.bejiihiu.dimensions.libs.hikari")
+        relocate("com.mysql", "kz.bejiihiu.dimensions.libs.mysql")
+        relocate("org.mariadb", "kz.bejiihiu.dimensions.libs.mariadb")
+        relocate("org.postgresql", "kz.bejiihiu.dimensions.libs.postgresql")
+        relocate("com.mongodb", "kz.bejiihiu.dimensions.libs.mongodb")
+        relocate("org.bson", "kz.bejiihiu.dimensions.libs.bson")
         dependencies {
             // Даёт прокси (Velocity 4 везёт Adventure 5): Adventure, slf4j и аннотации в jar не кладём.
             exclude(dependency("net.kyori:.*:.*"))
