@@ -5,6 +5,7 @@ import kz.bejiihiu.dimensions.common.model.DimensionId;
 import kz.bejiihiu.dimensions.common.model.Position;
 import kz.bejiihiu.dimensions.common.model.PortalOrientation;
 import kz.bejiihiu.dimensions.common.model.TransferCause;
+import kz.bejiihiu.dimensions.common.model.TransferContext;
 import kz.bejiihiu.dimensions.common.model.TransferOperation;
 import kz.bejiihiu.dimensions.common.model.Velocity;
 import kz.bejiihiu.dimensions.common.nether.NetherPortalConstants;
@@ -21,6 +22,8 @@ import kz.bejiihiu.dimensions.common.nether.RelativePortalPosition;
 import kz.bejiihiu.dimensions.common.nether.WorldBorderBounds;
 import kz.bejiihiu.dimensions.common.nether.PlannedPortalBlock;
 import kz.bejiihiu.dimensions.common.persistence.PortalIndexEntry;
+import kz.bejiihiu.dimensions.compat.CooldownStore;
+import kz.bejiihiu.dimensions.compat.PlayerPortalCooldowns;
 import kz.bejiihiu.dimensions.paper.scheduler.RegionMath;
 import kz.bejiihiu.dimensions.paper.scheduler.TaskHandle;
 import kz.bejiihiu.dimensions.paper.transfer.ArrivalWorldLookup;
@@ -67,16 +70,25 @@ import java.util.function.Consumer;
  * position, which is what makes the whole flow safe to run piecemeal across threads. Any
  * unresolved path keeps the journal placement; nothing here can strand the player.
  *
- * <p>Documented approximations (see the mechanics guide): the source portal's orientation is
- * not carried through the wire protocol, so the exit math assumes a shared axis; the source
- * side's hitbox-relative placement is likewise unavailable, so players arrive at the inner
- * rectangle's bottom-middle; velocity resets to zero across the connection switch; and a
- * fully unreadable scan yields the provisional placement rather than a blind portal creation.
+ * <p>Placement semantics: the source portal's relative-position context (fractions across the
+ * source inner rectangle plus the source axis) rides the shared database keyed by operation id —
+ * the wire request never reaches this backend. When present, the exit re-maps the fractions
+ * onto the destination portal's inner rectangle and rotates yaw by 90° when the destination
+ * portal's axis differs from the source's (the vanilla 1.21.x bytecode rule); velocity is
+ * zero across the connection switch and pitch is preserved either way. When absent — an
+ * unreadable scan on the source, an older context row, a non-portal arrival — the placement
+ * falls back to the rectangle's bottom-middle with the shared-axis math. Players riding a
+ * vehicle are exempt from the portal cooldown (vanilla assembly semantics); everyone else
+ * gets the 300 t stamp at arrival. A fully unreadable scan yields the provisional placement
+ * rather than a blind portal creation.
  */
 public final class NetherArrivalExecutor implements TransferArrivalService.PostClaimArrivalStep {
 
     /** Backstop for hung chunk loads; generous compared to any healthy server. */
     private static final long BACKSTOP_MILLIS = 10_000L;
+
+    /** Stale transfer-context rows older than this are reaped on the next arrival. */
+    private static final long CONTEXT_TTL_MILLIS = 10L * 60L * 1000L;
 
     /** On-demand index fill budget for a search square that came up empty (healthy DB). */
     private static final int COLD_SCAN_CHUNK_CAP = 64;
@@ -87,10 +99,13 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
 
     private final TransferBackend backend;
     private final PortalIndexer indexer;
+    private final CooldownStore cooldowns;
 
-    public NetherArrivalExecutor(TransferBackend backend, NetherPortalStore portalStore) {
+    public NetherArrivalExecutor(TransferBackend backend, NetherPortalStore portalStore,
+                                 CooldownStore cooldowns) {
         this.backend = java.util.Objects.requireNonNull(backend, "backend");
         java.util.Objects.requireNonNull(portalStore, "portalStore");
+        this.cooldowns = java.util.Objects.requireNonNull(cooldowns, "cooldowns");
         this.indexer = new PortalIndexer(portalStore, backend.diagnostics());
     }
 
@@ -109,6 +124,7 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
         Consumer<TransferArrivalService.ArrivalCompletion> finish = updated -> {
             if (settled.compareAndSet(false, true)) {
                 backend.schedulers().cancel(backstop[0]);
+                stampArrivalQuietly(player, opId);
                 done.accept(updated != null ? updated : completion);
             }
         };
@@ -155,9 +171,11 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
             backend.schedulers().runAsync(() -> {
                 Optional<List<PortalIndexEntry>> candidates =
                         indexer.candidates(dimension, box[0], box[1], box[2], box[3]);
+                Optional<TransferContext> sourceContext = contextQuietly(opId);
+                purgeStaleContextsQuietly();
                 backend.schedulers().runOn(player, () -> searchPhase(
                         completion, player, world, ideal, destIsNether, border, radius, idealBlock,
-                        dimension, candidates, finish));
+                        dimension, candidates, sourceContext, finish));
             });
         } catch (RuntimeException e) {
             backend.diagnostics().accept("nether arrival for operation " + opId
@@ -172,6 +190,7 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
                              Position ideal, boolean destIsNether, WorldBorderBounds border,
                              int radius, BlockPos idealBlock, DimensionId dimension,
                              Optional<List<PortalIndexEntry>> candidates,
+                             Optional<TransferContext> sourceContext,
                              Consumer<TransferArrivalService.ArrivalCompletion> finish) {
         UUID opId = completion.operationId();
         List<PortalIndexEntry> queried = candidates.orElse(List.of());
@@ -200,7 +219,7 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
             // nothing to verify against — run the decision with an empty harvest (it selects
             // nothing and falls through to creation exactly as a no-hit scan would)
             decide(completion, player, world, ideal, destIsNether, border, idealBlock,
-                    dimension, queried, new ConcurrentLinkedQueue<>(), false, finish);
+                    dimension, queried, new ConcurrentLinkedQueue<>(), false, sourceContext, finish);
             return;
         }
 
@@ -209,7 +228,7 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
         AtomicBoolean harvestFailed = new AtomicBoolean(false);
         Runnable onHarvestDone = () -> backend.schedulers().runOn(player, () -> decide(
                 completion, player, world, ideal, destIsNether, border, idealBlock,
-                dimension, queried, blocks, harvestFailed.get(), finish));
+                dimension, queried, blocks, harvestFailed.get(), sourceContext, finish));
         harvestChunks(world, toHarvest, minY, maxY, blocks, remaining, harvestFailed, onHarvestDone);
     }
 
@@ -258,6 +277,7 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
                         BlockPos idealBlock, DimensionId dimension,
                         List<PortalIndexEntry> queried, ConcurrentLinkedQueue<BlockPos> found,
                         boolean harvestFailed,
+                        Optional<TransferContext> sourceContext,
                         Consumer<TransferArrivalService.ArrivalCompletion> finish) {
         UUID opId = completion.operationId();
         List<BlockPos> harvested = new ArrayList<>(found);
@@ -283,13 +303,13 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
             backend.diagnostics().accept("nether arrival for operation " + opId
                     + ": found portal block at " + result.selectedBlock()
                     + " (squared distance " + (long) result.distanceSquared() + ")");
-            Position placement = exitPlacement(result.innerRectangle(), ideal);
+            Position placement = exitPlacement(result.innerRectangle(), ideal, sourceContext);
             finish.accept(completionWithPosition(completion, world, placement));
             return;
         }
 
         createPortalPhase(completion, player, world, ideal, border, idealBlock,
-                dimension, finish);
+                dimension, sourceContext, finish);
     }
 
     // ------------------------------------------------------------- creation
@@ -297,6 +317,7 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
     private void createPortalPhase(TransferArrivalService.ArrivalCompletion completion, Player player, World world,
                                    Position ideal, WorldBorderBounds border,
                                    BlockPos idealBlock, DimensionId dimension,
+                                   Optional<TransferContext> sourceContext,
                                    Consumer<TransferArrivalService.ArrivalCompletion> finish) {
         UUID opId = completion.operationId();
         int bottomY = world.getMinHeight();
@@ -329,7 +350,7 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
                     finish.accept(completion);
                     return;
                 }
-                Position exit = exitPlacement(chosen.innerRect(), ideal);
+                Position exit = exitPlacement(chosen.innerRect(), ideal, sourceContext);
                 try {
                     List<BlockPos> portalBlocks = chosen.blocks().stream()
                             .filter(block -> block.type() == PlannedPortalBlock.Type.NETHER_PORTAL)
@@ -386,6 +407,78 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
                 gatherFailed.set(true);
                 decrement.run();
             }
+        }
+    }
+
+    /**
+     * Exit placement for the destination portal. When the source recorded its portal context
+     * (see {@code TransferContext}), the traveller's hitbox-reduced fractions across the source
+     * rectangle are re-mapped onto the exit rectangle by {@link PortalExitCalculator} —
+     * exactly vanilla's placement. Otherwise the historical bottom-middle fallback applies.
+     */
+    private Position exitPlacement(PortalInnerRect exit, Position ideal,
+                                   Optional<TransferContext> sourceContext) {
+        return exitPlacementFromContext(exit, ideal, sourceContext).position();
+    }
+
+    /**
+     * Package-private for unit tests: the full placement computation, context or no context.
+     * {@code sourceAxis} comes from the context when present — the exit axis alone cannot
+     * decide the yaw rotation — and defaults to the exit axis (shared-axis math, same as
+     * the pre-context behaviour) when absent.
+     */
+    static PortalExitPlacement exitPlacementFromContext(PortalInnerRect exit, Position ideal,
+                                                        Optional<TransferContext> sourceContext) {
+        RelativePortalPosition relative = sourceContext.map(TransferContext::toRelative)
+                .orElse(new RelativePortalPosition(0.5, 0.0, 0.0));
+        PortalOrientation sourceAxis = sourceContext.map(TransferContext::sourceAxis)
+                .orElse(exit.axis());
+        double width = sourceContext.map(TransferContext::entityWidth).orElse(PLAYER_WIDTH);
+        double height = sourceContext.map(TransferContext::entityHeight).orElse(PLAYER_HEIGHT);
+        Velocity velocity = new Velocity(0.0, 0.0, 0.0);      // the switch drops the incoming momentum
+        return PortalExitCalculator.exitPlacement(exit, exit.axis(), sourceAxis, relative,
+                velocity, ideal.yaw(), ideal.pitch(), width, height);
+    }
+
+    /** Context read with the shared fail-soft contract: any failure falls back to bottom-middle. */
+    private Optional<TransferContext> contextQuietly(UUID opId) {
+        try {
+            return backend.transferContexts().find(opId);
+        } catch (RuntimeException e) {
+            backend.diagnostics().accept("nether arrival for operation " + opId
+                    + ": transfer context unreadable (" + e.getMessage()
+                    + "); using bottom-middle placement");
+            return Optional.empty();
+        }
+    }
+
+    /** Opportunistic reaping of context rows whose arrival never finalized; cheap on a warm pool. */
+    private void purgeStaleContextsQuietly() {
+        try {
+            backend.transferContexts().deleteOlderThan(java.time.Instant.now()
+                    .minusMillis(CONTEXT_TTL_MILLIS));
+        } catch (RuntimeException e) {
+            backend.diagnostics().accept("nether arrival: transfer context purge failed (" + e.getMessage() + ")");
+        }
+    }
+
+    /**
+     * Stamps the arriving player's PDC with the portal cooldown, on the player's own region.
+     * Skipped for players riding a vehicle (vanilla assembly semantics) — and never fatal:
+     * a stamp failure leaves the ping-pong protection absent, nothing else.
+     */
+    private void stampArrivalQuietly(Player player, UUID opId) {
+        TaskHandle handle = backend.schedulers().runOn(player, () -> {
+            try {
+                PlayerPortalCooldowns.stampArrival(cooldowns, player, opId, System.currentTimeMillis());
+            } catch (RuntimeException e) {
+                backend.diagnostics().accept("nether arrival for operation " + opId
+                        + ": could not stamp the portal cooldown (" + e.getMessage() + ")");
+            }
+        });
+        if (handle == null) {
+            backend.diagnostics().accept("nether arrival for operation " + opId
+                    + ": player retired before the portal cooldown could be stamped");
         }
     }
 
@@ -465,16 +558,6 @@ public final class NetherArrivalExecutor implements TransferArrivalService.PostC
     }
 
     // ------------------------------------------------------------- placement math
-
-    private Position exitPlacement(PortalInnerRect exit, Position ideal) {
-        PortalExitPlacement placement = PortalExitCalculator.exitPlacement(
-                exit, exit.axis(), exit.axis(),     // the source axis does not survive the switch; shared-axis math
-                new RelativePortalPosition(0.5, 0.0, 0.0),
-                new Velocity(0.0, 0.0, 0.0),        // the switch drops the incoming momentum
-                ideal.yaw(), ideal.pitch(),
-                PLAYER_WIDTH, PLAYER_HEIGHT);
-        return placement.position();
-    }
 
     private TransferArrivalService.ArrivalCompletion completionWithPosition(
             TransferArrivalService.ArrivalCompletion completion, World world, Position placement) {

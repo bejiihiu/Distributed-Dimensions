@@ -240,6 +240,21 @@ public final class TransferArrivalService {
     }
 
     /**
+     * Best-effort context cleanup at the operation's terminal paths. The context row only
+     * exists for portal-typed transfers and only ever has one consumer — the arrival step,
+     * which has consumed it (or never will) by the time any of these run. A failure here
+     * only leaves a row for the stale-context TTL purge; nothing depends on the delete.
+     */
+    private void deleteContextQuietly(UUID opId) {
+        try {
+            backend.transferContexts().delete(opId);
+        } catch (RuntimeException e) {
+            backend.diagnostics().accept("transfer context cleanup for operation " + opId
+                    + " failed: " + e.getMessage());
+        }
+    }
+
+    /**
      * Backstop for the whole claim->finalize window: if the player never completed the
      * arrival (disconnected during configuration), terminally fail the operation.
      */
@@ -248,6 +263,7 @@ public final class TransferArrivalService {
         if (completion == null || !completion.operationId().equals(operationId)) {
             return;   // completed (or been superseded) in time
         }
+        deleteContextQuietly(operationId);
         TransferOperation op;
         try {
             op = backend.journal().findById(operationId).orElse(null);
@@ -394,6 +410,7 @@ public final class TransferArrivalService {
     private void failAfterSync(Player player, ArrivalCompletion completion, Throwable rawError) {
         UUID opId = completion.operationId();
         UUID playerUuid = player.getUniqueId();
+        deleteContextQuietly(opId);
         Throwable cause = unwrap(rawError);
         boolean playerOnline = safeIsOnline(player) && !isOfflineReason(cause);
         TransferError error = mapSyncError(cause);
@@ -581,6 +598,7 @@ public final class TransferArrivalService {
     /** Chunk tickets, journal transitions, Complete event. Runs on the entity's scheduler. */
     ArrivalCompletion finalize(ArrivalCompletion completion, Player player) {
         UUID opId = completion.operationId();
+        deleteContextQuietly(opId);
         TransferOperation op;
         try {
             op = backend.journal().findById(opId).orElse(null);

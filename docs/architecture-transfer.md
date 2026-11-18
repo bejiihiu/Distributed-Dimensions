@@ -270,6 +270,9 @@ journal state machine and the wire protocol are shared.
 
 ## What the entities wave plugs in (as shipped)
 
+Portal-typed arrivals additionally use the `transfer_contexts` shared table (schema migration
+v4; written on the source next to the journal insert, read/deleted on the target at terminal time) to recover the traveller's relative spot inside the source portal — see `docs/nether-portals.md` § "Source-relative placement".
+
 Non-player entities do **not** ride `PortalTransferService` or this document's request-message
 shape. The shipped design (`kz.bejiihiu.dimensions.entities`, see `docs/entity-transfer.md`)
 is DB-mediated: the source intercepts `EntityPortalEvent` (HIGH, honouring prior

@@ -30,6 +30,8 @@ public final class SchemaMigrations {
         String dimensionIndex = TableNames.index(normalizedPrefix, "portal_index_dimension_origin");
         String respawnPoints = TableNames.table(normalizedPrefix, "respawn_points");
         String respawnUpdatedIndex = TableNames.index(normalizedPrefix, "respawn_points_updated_at");
+        String contexts = TableNames.table(normalizedPrefix, "transfer_contexts");
+        String contextsCreatedIndex = TableNames.index(normalizedPrefix, "transfer_contexts_created_at");
         String payloads = TableNames.table(normalizedPrefix, "entity_transfer_payloads");
         String payloadStateTargetIndex = TableNames.index(normalizedPrefix, "entity_payloads_state_target");
         String payloadStateIndex = TableNames.index(normalizedPrefix, "entity_payloads_state_created");
@@ -113,6 +115,22 @@ public final class SchemaMigrations {
                                 )""".formatted(payloads),
                                 "CREATE INDEX " + payloadStateTargetIndex + " ON " + payloads + " (state, target_server, created_at)",
                                 "CREATE INDEX " + payloadStateIndex + " ON " + payloads + " (state, created_at)"
+                        )),
+                new Migration(4, "transfer contexts table",
+                        List.of(
+                                """
+                                CREATE TABLE IF NOT EXISTS %s (
+                                    op_id         VARCHAR(36) PRIMARY KEY,
+                                    player_uuid   VARCHAR(36),
+                                    source_axis   VARCHAR(8)  NOT NULL,
+                                    fx            DOUBLE      NOT NULL,
+                                    fy            DOUBLE      NOT NULL,
+                                    forward       DOUBLE      NOT NULL,
+                                    entity_width  DOUBLE      NOT NULL,
+                                    entity_height DOUBLE      NOT NULL,
+                                    created_at    BIGINT      NOT NULL
+                                )""".formatted(contexts),
+                                "CREATE INDEX " + contextsCreatedIndex + " ON " + contexts + " (created_at)"
                         )));
     }
 }

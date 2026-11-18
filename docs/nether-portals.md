@@ -29,10 +29,14 @@ player stands in NETHER_PORTAL block
         v
 PlayerPortalEvent (completion!)                 
   NetherPortalListener: cancel - always         
+  cooldown check (PDC, 300 t) - skip if hot     
   compute ideal destination via converter        
-  (OW: floor(x/8), N: x*8, Y kept, yaw/pitch)    
+  (OW: floor(x/8), N: x*8, Y kept, yaw/pitch)   
+  capture source portal context (POI scan):    
+  fractions across the source inner rectangle    
         v                                        
 journal row (NETHER_PORTAL) + start event        
++ transfer_contexts row (shared DB, op id)      
         v                                        
 proxy switch ---------------------------------> player connects (configuration phase)
                                                   AsyncPlayerSpawnLocationEvent
@@ -163,7 +167,8 @@ touch the world until the player is queued for placement:
      distance (Y counts fully, never Manhattan), tie-break lower Y then lower x then lower
      z - via `PortalSearch.selectForDestination`. A found portal is placed via the vanilla
      hitbox/rectangle math (`PortalExitCalculator`, inner rectangle, hitbox-bottom,
-     hitbox-center). If nothing is found, the vanilla creation algorithm runs
+     hitbox-center), re-mapping the relative fractions captured on the source (see
+     "Source-relative placement" below). If nothing is found, the vanilla creation algorithm runs
      (`PortalCreationPlanner`: spiral search radius 16, full > partial site, forced
      placement with the 2x3 obsidian platform as the last resort) and the plan is executed
      via region tasks (portal blocks get `Orientable.setAxis` from the plan orientation;
@@ -205,26 +210,92 @@ arrival **exit chunk** is ticketed (and ring-of-8 when `entities.cross-server-tr
 destination-loader window, re-acquired on every passage. If the add fails, the arrival
 proceeds normally (tickets are an optimization).
 
-### What the exit placement cannot know
+### Portal cooldown (players)
 
-The wire protocol (v1, frozen) carries no source portal orientation or source hitbox
-geometry, so:
+Vanilla cools down **everything** that passes through a portal - 300 ticks (15 s) for
+ordinary entities including players, 10 ticks for minecarts/boats, ~2 ticks for projectiles,
+and **nothing at all** for a player-carrying assembly - so a player whose arrival lands them
+back inside the exit portal cannot re-trigger it for 15 seconds. This build reproduces that
+for players with the same PDC mechanism entities use (`distributeddimensions:portal_cooldown_at`
++ `portal_cooldown_op`, via `PdcCooldownStore`):
 
-- **source portal orientation** is assumed to match the destination portal's orientation
-  (shared-axis math) - a 90-degree rotated portal pair does not rotate yaw/velocity by 90;
-- **hitbox-relative offsets** within the source portal are not scaled; players arrive at
-  the inner rectangle's **bottom-middle** (`right = 0.5`, `up = 0.0`), which for a 2x3
-  portal with a player-sized hitbox is byte-identical to vanilla's output for centred
-  crossings;
-- **velocity** is zeroed across the connection switch (vanilla would rotate it);
-- **pitch** is preserved, **yaw** is preserved for the shared-axis case;
+- **arrival stamp (target backend):** when the nether arrival step completes - on any of its
+  paths, including the provisional-placement fallback - the arriving player's PDC is stamped
+  with the 300 t ordinary-entity window and the operation id. A player riding a vehicle is
+  exempt (assembly semantics) and is not stamped.
+- **completion guard (source backend):** before routing a portal completion into a transfer,
+  the listener consults the same stamp. On cooldown the completion is cancelled silently
+  (no transfer, no message) and the crossing is marked (`NetherCrossingMarker`) so the
+  mirage guard does not pick it up either - the player stays in the portal, exactly like
+  vanilla's inert portal. A player riding a vehicle is exempt and transfers immediately.
+- **what this closes:** without the guard, a player arriving inside the destination portal
+  would re-arm vanilla's 80-tick delay and ping-pong back and forth forever, one server
+  switch every ~4 seconds. The cooldown makes the arrival's re-entry window inert.
+- **scope:** players only. The non-player entity cooldown rules (300/10/2 ticks, player-
+  assembly exemption) already apply to the entity transfer; the End portal path does not
+  stamp players (no portal-cooldown semantics there either).
+
+### Source-relative placement (v4 context table)
+
+The vanilla rule - the traveller's hitbox-reduced spot inside the source inner rectangle is
+re-mapped onto the destination rectangle - is now reproduced for players, without touching
+the frozen wire protocol. The source backend, at the moment the portal completion fires,
+captures:
+
+- the source portal's **inner rectangle** and **horizontal axis** (`HORIZONTAL_AXIS` of its
+  blocks), via the same POI scan the entity transfer already uses (`locateAllPoiInRange`,
+  never a world scan); if the scan finds nothing, the transfer proceeds without context;
+- the **relative fractions** of the player's hitbox inside that rectangle -
+  `right`/`up` in `[0, 1]` from `PortalExitCalculator.relativePosition` (living-entity
+  rules: the forward offset is zero), plus the hitbox width/height at event time
+  (a crouching player is 1.5 blocks high - the exact value travels);
+- nothing else. Velocity is zero across a connection switch in vanilla's behaviour anyway;
+  yaw/pitch are already carried in the journal's `target_position`.
+
+The fractions and the source axis travel **not** on the wire (the target backend never sees
+the wire request - the switch is mediated by the proxy) but in a small shared-database table,
+`transfer_contexts` (schema migration **v4**: `op_id` primary key, `player_uuid`,
+`source_axis`, `fx`, `fy`, `forward`, `entity_width`, `entity_height`, `created_at`). The
+source writes the row next to the journal insert with the same operation id (a failure only
+degrades placement to bottom-middle); the target reads it at arrival time, deletes it at the
+terminal path (`finalize` / sync failure / claim timeout), and reaps rows older than 10
+minutes opportunistically. The table is entity-agnostic - nothing player-specific beyond the
+diagnostics-only `player_uuid`, so the same mechanism can serve non-player portal passes
+later.
+
+On the destination backend, `PortalExitCalculator.exitPlacement` re-applies the fractions to
+the found (or created) destination inner rectangle with the source axis carried alongside:
+
+- portals of the **same axis** - the position maps across the shared rectangle axes and yaw
+  is preserved unchanged;
+- **perpendicular** portals (x vs z) - the fractions map across the other axis and yaw
+  **increases by 90** (always, never decreases, regardless of travel direction - the
+  1.21.x bytecode rule reproduced in `PortalExitCalculator`); velocity stays zero;
+- **pitch** is preserved in every case; **velocity is zero** across the switch;
+- if the hitbox is wider/taller than the source portal the source-side fraction falls back
+  to `0.5`/`0.0` exactly like vanilla's `entityPosInPortal`, and that fraction maps onto the
+  destination; a hitbox wider than the destination portal itself is re-mapped out-of-bounds
+  exactly as vanilla does (no extra clamping).
+
+When the context row is missing - the source scan failed, or the transfer was created
+programmatically - the arrival falls back to the previous behaviour:
+bottom-middle (`right = 0.5`, `up = 0.0`) with shared-axis yaw preservation.
+
+### What the exit placement cannot know (remaining gaps)
+
+- **velocity** is zeroed across the connection switch (vanilla would rotate it for
+  perpendicular portals) - momentum does not survive a re-login anywhere on this network;
+- **pitch** is preserved, **yaw** is preserved for the shared-axis case and rotated +90 for
+  perpendicular portals;
 - **search Y** is unrestricted (full world height) as in vanilla;
 - the player spawns at the provisional (journal) position for ~1-3 ticks before the settle
   teleport - a one-block suffocation cannot deal damage inside that window, and nobody sees
-  the intermediate position.
-
-Closing the orientation/hitbox gaps means carrying a few more bits in the wire protocol -
-deliberately out of scope here (protocol v1 is frozen).
+  the intermediate position;
+- the **forward offset** inside the portal plane is always zero for players (vanilla
+  living-entity rules), so the perpendicular placement within the plane block is always the
+  plane's center;
+- the **End** portal path carries no context row (the end arrival does not use the exit-rect
+  mapping) - only the nether path above does.
 
 ## Coexistence with the mirage guards (compat D)
 

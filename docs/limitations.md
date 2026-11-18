@@ -118,14 +118,14 @@ list three worlds per backend — that is the point, not a bug.
   causes via `PlayerSetSpawnEvent` are.
 - **Custom dimensions:** no respawn records, no exit-portal routing; a bed there is silently
   untracked by design.
-- **Portal cooldown bookkeeping is split.** The entity transfer pipeline stamps the PDC
-  keys (`distributeddimensions:portal_cooldown_at` / `portal_cooldown_op`) on arrival and
-  checks them source-side, mirroring vanilla's 300/10/~2-tick table (never for an assembly
-  carrying a player). The *player* crossing flow does not stamp PDC cooldowns at all — it
-  uses a process-local marker (`NetherCrossingMarker`, 250 ms dedupe per player) to suppress
-  double completions inside one dwell, and vanilla re-arms at the gamerule cadence. So
-  `PortalRegistry.isPortalCoolingDown(entity)` answers truthfully for entities the entity
-  pipeline stamped, and almost always `false` otherwise — do not build player-facing UX on it.
+- **Portal cooldowns are tracked, with a boundary.** The PDC-backed cooldown
+  (`distributeddimensions:portal_cooldown_at` / `portal_cooldown_op`) is stamped for players
+  on the nether arrival and for entities on their arrival, and the source-side portal
+  listener suppresses re-entry mid-cooldown; players riding a vehicle are exempt (assembly
+  semantics). The stamp is per-server entity PDC: it is exact for the re-entry case it exists
+  for (the player lands inside the arrival portal on the same backend), but it does not
+  survive crossing to another backend (a fresh player entity elsewhere has its own PDC) —
+  full cross-backend cooldown parity would need the cooldown in shared state, not PDC.
 - **Remote border approximation.** World borders are server-local configuration. Nothing in
   this build replicates a destination backend's configured border across the proxy: portal
   search/creation math (`common.nether`) takes its `WorldBorderBounds` at the call site, the

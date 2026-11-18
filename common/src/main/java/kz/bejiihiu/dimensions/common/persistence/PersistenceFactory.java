@@ -60,6 +60,7 @@ public final class PersistenceFactory {
                 new SqlPortalIndex(dataSource, normalizedPrefix),
                 new SqlRespawnPointStore(dataSource, normalizedPrefix),
                 new SqlEntityPayloadStore(dataSource, normalizedPrefix),
+                new SqlTransferContextStore(dataSource, normalizedPrefix),
                 dataSource::close);
     }
 
@@ -86,15 +87,19 @@ public final class PersistenceFactory {
             MongoCollection<Document> respawnCollection = database.getCollection(respawn);
             String payloads = TableNames.table(normalizedPrefix, "entity_transfer_payloads");
             MongoCollection<Document> payloadsCollection = database.getCollection(payloads);
+            String contexts = TableNames.table(normalizedPrefix, "transfer_contexts");
+            MongoCollection<Document> contextsCollection = database.getCollection(contexts);
             MongoTransferOperationJournal.ensureIndexes(opsCollection);
             MongoPortalIndex.ensureIndexes(portalsCollection);
             MongoRespawnPointStore.ensureIndexes(respawnCollection);
             MongoEntityPayloadStore.ensureIndexes(payloadsCollection);
+            MongoTransferContextStore.ensureIndexes(contextsCollection);
             return new DimensionPersistence(
                     new MongoTransferOperationJournal(opsCollection),
                     new MongoPortalIndex(portalsCollection),
                     new MongoRespawnPointStore(respawnCollection),
                     new MongoEntityPayloadStore(payloadsCollection),
+                    new MongoTransferContextStore(contextsCollection),
                     client::close);
         } catch (com.mongodb.MongoException e) {
             client.close();

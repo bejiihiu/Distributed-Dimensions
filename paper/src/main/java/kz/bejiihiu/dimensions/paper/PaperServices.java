@@ -5,6 +5,7 @@ import kz.bejiihiu.dimensions.common.persistence.DimensionPersistence;
 import kz.bejiihiu.dimensions.common.persistence.EntityPayloadStore;
 import kz.bejiihiu.dimensions.common.persistence.PortalIndex;
 import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
+import kz.bejiihiu.dimensions.common.persistence.TransferContextStore;
 import kz.bejiihiu.dimensions.common.persistence.TransferOperationJournal;
 import kz.bejiihiu.dimensions.paper.chunktickets.ChunkTicketService;
 import kz.bejiihiu.dimensions.paper.scheduler.Schedulers;
@@ -148,6 +149,11 @@ public final class PaperServices implements AutoCloseable {
     /** Entity-transfer payload store. Same fail-closed contract as {@link #persistence()}. */
     public EntityPayloadStore entityPayloads() {
         return persistence().entityPayloads();
+    }
+
+    /** Transfer-context store. Same fail-closed contract as {@link #persistence()}. */
+    public TransferContextStore transferContexts() {
+        return persistence().transferContexts();
     }
 
     // ------------------------------------------------------------------ services

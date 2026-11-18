@@ -4,6 +4,7 @@ import kz.bejiihiu.dimensions.common.model.DimensionId;
 import kz.bejiihiu.dimensions.common.model.OperationState;
 import kz.bejiihiu.dimensions.common.model.Position;
 import kz.bejiihiu.dimensions.common.model.TransferCause;
+import kz.bejiihiu.dimensions.common.model.TransferContext;
 import kz.bejiihiu.dimensions.common.model.TransferError;
 import kz.bejiihiu.dimensions.common.model.TransferOperation;
 import kz.bejiihiu.dimensions.common.protocol.DimensionTransferRequestMessage;
@@ -12,9 +13,11 @@ import kz.bejiihiu.dimensions.common.protocol.ProtocolCodec;
 import kz.bejiihiu.dimensions.common.protocol.ProtocolDecodeException;
 import kz.bejiihiu.dimensions.common.protocol.ProtocolEncodeException;
 import kz.bejiihiu.dimensions.common.protocol.ProtocolMessage;
+import kz.bejiihiu.dimensions.common.nether.TransferSourceContext;
 import kz.bejiihiu.dimensions.common.util.IdGenerator;
 
 import org.bukkit.entity.Player;
+import org.jetbrains.annotations.Nullable;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -69,9 +72,24 @@ public final class PortalTransferService implements TransferChannelSink {
     /**
      * Runs on the triggering portal's region thread. The caller has already cancelled the
      * portal event — vanilla cannot cross servers, so the event is never allowed to stand.
+     *
+     * <p>Portal-typed transfers (a {@code sourceContext} is supplied, i.e. a real portal block
+     * initiated the crossing) additionally persist the source portal's relative-position
+     * context next to the journal insert. The target backend reads it at arrival time to map
+     * the traveller's spot inside the destination portal — the journal schema carries no such
+     * data and the wire request never reaches the target. A context-write failure never
+     * aborts the transfer: the target then falls back to bottom-middle placement, exactly the
+     * pre-context behaviour.
      */
     public Outcome transfer(Player player, DimensionId from, DimensionId to,
                             TransferCause cause, Position arrival) {
+        return transfer(player, from, to, cause, arrival, null);
+    }
+
+    /** Portal-typed transfer with the source portal context (see {@link TransferSourceContext}). */
+    public Outcome transfer(Player player, DimensionId from, DimensionId to,
+                            TransferCause cause, Position arrival,
+                            @Nullable TransferSourceContext sourceContext) {
         if (player == null) {
             throw new IllegalArgumentException("player must not be null");
         }
@@ -118,6 +136,9 @@ public final class PortalTransferService implements TransferChannelSink {
         if (!backend.journal().compareAndSetState(operationId, OperationState.CREATED, preparing)) {
             failRowQuietly(operationId, TransferError.UNKNOWN, "journal moved before dispatch");
             return new Outcome.Refused("operation journal race, transfer aborted");
+        }
+        if (sourceContext != null) {
+            writeContextQuietly(operationId, player.getUniqueId(), sourceContext, preparingAt);
         }
 
         byte[] payload;
@@ -229,6 +250,25 @@ public final class PortalTransferService implements TransferChannelSink {
     }
 
     // ------------------------------------------------------------ helpers
+
+    /**
+     * Best-effort context write for portal-typed transfers. A failure here never aborts the
+     * dispatch — the journal row stands and the target falls back to the bottom-middle
+     * placement it always used. Runs after the journal CAS, so a cancelled start never
+     * leaves a context row behind.
+     */
+    private void writeContextQuietly(UUID operationId, UUID playerUuid,
+                                     TransferSourceContext sourceContext, Instant at) {
+        try {
+            backend.transferContexts().put(TransferContext.created(operationId, playerUuid,
+                    sourceContext.axis(), sourceContext.relative(),
+                    sourceContext.entityWidth(), sourceContext.entityHeight(), at));
+        } catch (RuntimeException e) {
+            backend.warn().accept("portal transfer " + operationId
+                    + ": could not persist the source portal context (" + e.getMessage()
+                    + "); the arrival falls back to bottom-middle placement");
+        }
+    }
 
     /**
      * Online probe for the failure paths. Prefers the entity's own status; falls back to a

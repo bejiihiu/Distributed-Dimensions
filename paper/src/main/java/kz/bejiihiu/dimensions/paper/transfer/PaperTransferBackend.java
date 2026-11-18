@@ -2,6 +2,7 @@ package kz.bejiihiu.dimensions.paper.transfer;
 
 import kz.bejiihiu.dimensions.common.config.PluginConfig;
 import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
+import kz.bejiihiu.dimensions.common.persistence.TransferContextStore;
 import kz.bejiihiu.dimensions.common.persistence.TransferOperationJournal;
 import kz.bejiihiu.dimensions.paper.DimensionResolver;
 import kz.bejiihiu.dimensions.paper.PaperServices;
@@ -71,6 +72,11 @@ public final class PaperTransferBackend implements TransferBackend {
     @Override
     public RespawnPointStore respawnPoints() {
         return services.respawnPoints();
+    }
+
+    @Override
+    public TransferContextStore transferContexts() {
+        return services.transferContexts();
     }
 
     @Override

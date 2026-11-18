@@ -28,6 +28,11 @@ public final class FakePlayers {
 
     /** A proxy player with a deterministic identity. */
     public static Player create(UUID uuid, Location location, boolean online) {
+        return create(uuid, location, online, null);
+    }
+
+    /** A proxy player riding the given vehicle (or standing, when {@code vehicle} is null). */
+    public static Player create(UUID uuid, Location location, boolean online, @org.jetbrains.annotations.Nullable org.bukkit.entity.Entity vehicle) {
         List<String> messages = new CopyOnWriteArrayList<>();
         MutableLocation current = new MutableLocation(location);
         List<TeleportCall> teleports = new CopyOnWriteArrayList<>();
@@ -38,6 +43,10 @@ public final class FakePlayers {
                     return uuid;
                 case "isOnline":
                     return online;
+                case "getVehicle":
+                    return vehicle;
+                case "getPassengers":
+                    return java.util.List.of();
                 case "getLocation":
                     return current.get();
                 case "getWorld":

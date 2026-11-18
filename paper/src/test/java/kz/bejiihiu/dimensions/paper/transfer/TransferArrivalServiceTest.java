@@ -2,10 +2,12 @@ package kz.bejiihiu.dimensions.paper.transfer;
 
 import kz.bejiihiu.dimensions.common.model.DimensionId;
 import kz.bejiihiu.dimensions.common.model.OperationState;
+import kz.bejiihiu.dimensions.common.model.PortalOrientation;
 import kz.bejiihiu.dimensions.common.model.Position;
 import kz.bejiihiu.dimensions.common.model.RespawnKind;
 import kz.bejiihiu.dimensions.common.model.RespawnPointRecord;
 import kz.bejiihiu.dimensions.common.model.TransferCause;
+import kz.bejiihiu.dimensions.common.model.TransferContext;
 import kz.bejiihiu.dimensions.common.model.TransferOperation;
 import kz.bejiihiu.dimensions.common.model.TransferError;
 import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
@@ -249,6 +251,41 @@ class TransferArrivalServiceTest {
 
         // a late claim for the same op cannot happen (op is terminal)
         assertTrue(claim(playerUuid).isEmpty());
+    }
+
+    @Test
+    void finalizeDeletesTheTransferContext() {
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        backend.contextStore().put(new TransferContext(op.operationId(), playerUuid,
+                PortalOrientation.X_AXIS, 0.5, 0.5, 0.0, 0.6, 1.8, T0));
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 100.5, 49.0, 0.5, 90.0f, 0.0f), true);
+        claim(playerUuid);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+
+        assertTrue(backend.contextStore().find(op.operationId()).isEmpty(),
+                "the context row is consumed at the terminal path");
+    }
+
+    @Test
+    void claimTimeoutDeletesTheTransferContext() {
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        backend.contextStore().put(new TransferContext(op.operationId(), playerUuid,
+                PortalOrientation.Z_AXIS, 0.25, 0.75, 0.0, 0.6, 1.8, T0));
+        claim(playerUuid);
+        // the player never joins — fire the two-timeout backstop
+        backend.fakeSchedulers().advanceMillis(2L * 10_000L + 1);
+
+        TransferOperation done = backend.journalFake().findById(op.operationId()).orElseThrow();
+        assertEquals(OperationState.FAILED, done.state());
+        assertTrue(backend.contextStore().find(op.operationId()).isEmpty(),
+                "a timed-out arrival drops its context row");
     }
 
     @Test

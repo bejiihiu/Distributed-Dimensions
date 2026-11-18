@@ -2,6 +2,7 @@ package kz.bejiihiu.dimensions.paper.transfer;
 
 import kz.bejiihiu.dimensions.common.config.PluginConfig;
 import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
+import kz.bejiihiu.dimensions.common.persistence.TransferContextStore;
 import kz.bejiihiu.dimensions.common.persistence.TransferOperationJournal;
 import kz.bejiihiu.dimensions.paper.DimensionResolver;
 import kz.bejiihiu.dimensions.paper.chunktickets.ChunkTicketService;
@@ -31,6 +32,8 @@ public interface TransferBackend {
     TransferOperationJournal journal();
 
     RespawnPointStore respawnPoints();
+
+    TransferContextStore transferContexts();
 
     ChunkTicketService chunkTickets();
 

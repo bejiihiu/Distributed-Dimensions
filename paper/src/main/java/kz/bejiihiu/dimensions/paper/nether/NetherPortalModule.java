@@ -1,5 +1,6 @@
 package kz.bejiihiu.dimensions.paper.nether;
 
+import kz.bejiihiu.dimensions.compat.PdcCooldownStore;
 import kz.bejiihiu.dimensions.paper.PaperServices;
 import kz.bejiihiu.dimensions.paper.end.BedAnchorValidator;
 import kz.bejiihiu.dimensions.paper.end.EndArrivalPlanResolver;
@@ -44,6 +45,7 @@ public final class NetherPortalModule {
                 services.config().portals().nether().enabled());
         BukkitTransferEventDispatcher dispatcher = new BukkitTransferEventDispatcher(plugin);
         PluginMessageTransferChannel channel = new PluginMessageTransferChannel(plugin);
+        PdcCooldownStore cooldowns = new PdcCooldownStore(plugin);
         PaperTransferBackend backend = new PaperTransferBackend(services, dispatcher, channel, plugin);
 
         PortalTransferService transfers = new PortalTransferService(backend, Clock.systemUTC());
@@ -53,7 +55,8 @@ public final class NetherPortalModule {
         BedAnchorValidator bedAnchor = new BedAnchorValidator(backend);
         NetherCausePositionValidator validator = new NetherCausePositionValidator(bedAnchor);
 
-        NetherArrivalExecutor netherArrivals = new NetherArrivalExecutor(backend, new PaperNetherPortalStore());
+        NetherArrivalExecutor netherArrivals =
+                new NetherArrivalExecutor(backend, new PaperNetherPortalStore(), cooldowns);
         TransferArrivalService arrivals =
                 new TransferArrivalService(backend, Clock.systemUTC(), resolver, validator, netherArrivals);
 
@@ -68,7 +71,7 @@ public final class NetherPortalModule {
 
         plugin.getServer().getPluginManager().registerEvents(new RespawnRecorder(backend), plugin);
         plugin.getServer().getPluginManager().registerEvents(new EndPortalListener(backend, transfers), plugin);
-        plugin.getServer().getPluginManager().registerEvents(new NetherPortalListener(backend, transfers), plugin);
+        plugin.getServer().getPluginManager().registerEvents(new NetherPortalListener(backend, transfers, cooldowns), plugin);
         plugin.getServer().getPluginManager().registerEvents(new TransferArrivalListener(arrivals,
                 new BukkitWorldLookup(() -> ownEnvironment, isMirage)), plugin);
     }

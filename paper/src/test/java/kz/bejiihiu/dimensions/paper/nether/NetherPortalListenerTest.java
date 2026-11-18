@@ -3,7 +3,9 @@ package kz.bejiihiu.dimensions.paper.nether;
 import kz.bejiihiu.dimensions.common.model.DimensionId;
 import kz.bejiihiu.dimensions.common.model.Position;
 import kz.bejiihiu.dimensions.common.model.TransferCause;
+import kz.bejiihiu.dimensions.compat.InMemoryCooldownStore;
 import kz.bejiihiu.dimensions.paper.FakePlayers;
+import kz.bejiihiu.dimensions.paper.TestVehicles;
 import kz.bejiihiu.dimensions.paper.TestWorlds;
 import kz.bejiihiu.dimensions.paper.transfer.FakeTransferBackend;
 import kz.bejiihiu.dimensions.paper.transfer.PortalTransferService;
@@ -36,6 +38,7 @@ class NetherPortalListenerTest {
     private FakeTransferBackend backend;
     private PortalTransferService service;
     private NetherPortalListener listener;
+    private InMemoryCooldownStore cooldowns;
 
     private World overworld, nether, theEnd;
 
@@ -43,8 +46,9 @@ class NetherPortalListenerTest {
     void setUp() {
         NetherCrossingMarker.clear();
         backend = new FakeTransferBackend(FakeTransferBackend.loadDefaults(tempDir));
+        cooldowns = new InMemoryCooldownStore();
         service = new PortalTransferService(backend, java.time.Clock.fixed(T0, ZoneOffset.UTC));
-        listener = new NetherPortalListener(backend, service);
+        listener = new NetherPortalListener(backend, service, cooldowns);
         overworld = TestWorlds.create("world", World.Environment.NORMAL);
         nether = TestWorlds.create("world_nether", World.Environment.NETHER);
         theEnd = TestWorlds.create("world_the_end", World.Environment.THE_END);
@@ -147,7 +151,7 @@ class NetherPortalListenerTest {
         FakeTransferBackend degraded = new FakeTransferBackend(FakeTransferBackend.loadDefaults(tempDir), false);
         PortalTransferService failing =
                 new PortalTransferService(degraded, java.time.Clock.fixed(T0, ZoneOffset.UTC));
-        NetherPortalListener degradedListener = new NetherPortalListener(degraded, failing);
+        NetherPortalListener degradedListener = new NetherPortalListener(degraded, failing, cooldowns);
 
         Player player = fakePlayer(overworld);
         PlayerPortalEvent event = portalEvent(player, overworld, 0.0, 64.0, 0.0,
@@ -172,7 +176,7 @@ class NetherPortalListenerTest {
         FakeTransferBackend disabledBackend = new FakeTransferBackend(disabled);
         PortalTransferService disabledService =
                 new PortalTransferService(disabledBackend, java.time.Clock.fixed(T0, ZoneOffset.UTC));
-        NetherPortalListener disabledListener = new NetherPortalListener(disabledBackend, disabledService);
+        NetherPortalListener disabledListener = new NetherPortalListener(disabledBackend, disabledService, cooldowns);
 
         Player player = fakePlayer(overworld);
         PlayerPortalEvent event = portalEvent(player, overworld, 0.0, 64.0, 0.0,
@@ -183,6 +187,50 @@ class NetherPortalListenerTest {
         assertTrue(event.isCancelled());
         assertTrue(disabledBackend.channelFake().sent().isEmpty());
         assertTrue(FakePlayers.messages(player).stream().anyMatch(m -> m.contains("cannot travel")));
+    }
+
+    @Test
+    void playerOnPortalCooldownIsSuppressedWithNoTransferAndNoMessage() {
+        Player player = fakePlayer(overworld);
+        cooldowns.stamp(player, UUID.randomUUID(), System.currentTimeMillis());
+        PlayerPortalEvent event = portalEvent(player, overworld, 100.0, 64.0, -200.0,
+                PlayerTeleportEvent.TeleportCause.NETHER_PORTAL);
+
+        listener.onPortal(event);
+
+        assertTrue(event.isCancelled(), "a suppressed completion still vetoes vanilla's own teleport");
+        assertTrue(backend.channelFake().sent().isEmpty(), "on cooldown: no transfer may happen");
+        assertTrue(backend.eventRecorder().starts().isEmpty());
+        assertTrue(FakePlayers.messages(player).isEmpty(), "a suppressed completion is silent");
+    }
+
+    @Test
+    void playerCooldownExpiredPassesAgain() {
+        Player player = fakePlayer(overworld);
+        // stamped just past the 15 s window — a fresh crossing is due
+        cooldowns.stamp(player, UUID.randomUUID(),
+                System.currentTimeMillis() - kz.bejiihiu.dimensions.compat.PortalCooldownRules.ORDINARY_MILLIS - 1L);
+        PlayerPortalEvent event = portalEvent(player, overworld, 100.0, 64.0, -200.0,
+                PlayerTeleportEvent.TeleportCause.NETHER_PORTAL);
+
+        listener.onPortal(event);
+
+        assertTrue(event.isCancelled());
+        assertEquals(1, backend.channelFake().sent().size(), "cooldown expired — the crossing transfers");
+    }
+
+    @Test
+    void playerRidingAVehicleIsExemptFromTheCooldown() {
+        Player player = FakePlayers.create(UUID.randomUUID(),
+                new Location(overworld, 100.0, 64.0, -200.0, 90.0f, 0.0f), true, TestVehicles.minecart());
+        cooldowns.stamp(player, UUID.randomUUID(), System.currentTimeMillis());
+        PlayerPortalEvent event = portalEvent(player, overworld, 100.0, 64.0, -200.0,
+                PlayerTeleportEvent.TeleportCause.NETHER_PORTAL);
+
+        listener.onPortal(event);
+
+        assertEquals(1, backend.channelFake().sent().size(),
+                "a player riding a vehicle never cools down — vanilla assembly semantics");
     }
 
     @Test

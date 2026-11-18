@@ -5,8 +5,10 @@ import kz.bejiihiu.dimensions.common.config.EnvLookup;
 import kz.bejiihiu.dimensions.common.config.Environment;
 import kz.bejiihiu.dimensions.common.config.PluginConfig;
 import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
+import kz.bejiihiu.dimensions.common.persistence.TransferContextStore;
 import kz.bejiihiu.dimensions.common.persistence.TransferOperationJournal;
 import kz.bejiihiu.dimensions.common.persistence.InMemoryRespawnPointStore;
+import kz.bejiihiu.dimensions.common.persistence.InMemoryTransferContextStore;
 import kz.bejiihiu.dimensions.paper.DimensionResolver;
 import kz.bejiihiu.dimensions.paper.chunktickets.ChunkTicketService;
 import kz.bejiihiu.dimensions.paper.chunktickets.FakeChunkTicketGateway;
@@ -33,6 +35,7 @@ public final class FakeTransferBackend implements TransferBackend {
     private final FakeSchedulers schedulers = new FakeSchedulers();
     private final FakeTransferOperationJournal journal = new FakeTransferOperationJournal();
     private RespawnPointStore respawnPoints = new InMemoryRespawnPointStore();
+    private TransferContextStore transferContexts = new InMemoryTransferContextStore();
     private final RecordingTransferEventDispatcher events = new RecordingTransferEventDispatcher();
     private final RecordingTransferChannel channel = new RecordingTransferChannel();
     private final ChunkTicketService chunkTickets;
@@ -136,6 +139,21 @@ public final class FakeTransferBackend implements TransferBackend {
     @Override
     public RespawnPointStore respawnPoints() {
         return respawnPoints;
+    }
+
+    @Override
+    public TransferContextStore transferContexts() {
+        return transferContexts;
+    }
+
+    /** Direct access to the context store for seeding/asserting in tests. */
+    public TransferContextStore contextStore() {
+        return transferContexts;
+    }
+
+    /** Swaps the context store (e.g. for a failing fake in failure-path tests). */
+    public void setTransferContexts(TransferContextStore store) {
+        this.transferContexts = java.util.Objects.requireNonNull(store, "store");
     }
 
     @Override
