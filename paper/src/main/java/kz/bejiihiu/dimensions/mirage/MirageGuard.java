@@ -5,6 +5,7 @@ import kz.bejiihiu.dimensions.common.model.Position;
 import kz.bejiihiu.dimensions.common.model.TransferCause;
 import kz.bejiihiu.dimensions.interop.CrossServerTransfer;
 import kz.bejiihiu.dimensions.interop.TransferCommand;
+import kz.bejiihiu.dimensions.paper.nether.NetherCrossingMarker;
 import kz.bejiihiu.dimensions.paper.PaperServices;
 import kz.bejiihiu.dimensions.paper.scheduler.Schedulers;
 
@@ -117,6 +118,14 @@ public final class MirageGuard {
 
         @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = false)
         public void onPlayerTeleport(PlayerTeleportEvent event) {
+            // portal-completion events the portal flows already took over are ours to leave
+            // alone — the owning flow has either started the transfer or deliberately refused;
+            // either way the crossing must not be requested twice. Plain teleports (e.g. /tp
+            // into a mirage) are never skipped by this marker.
+            if (event instanceof org.bukkit.event.player.PlayerPortalEvent
+                    && NetherCrossingMarker.isMarked(event.getPlayer().getUniqueId())) {
+                return;
+            }
             Location to = event.getTo();
             World targetWorld = to == null ? null : to.getWorld();
             DimensionId targetDimension = mirage.dimensionOf(targetWorld).orElse(null);

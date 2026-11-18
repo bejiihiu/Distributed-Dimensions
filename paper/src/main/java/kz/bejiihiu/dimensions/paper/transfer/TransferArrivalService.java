@@ -30,10 +30,14 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * Target side of a portal-initiated cross-server transfer for a player. One code path
- * serves both End portals (and later the Nether portal). The arrival flow:
+ * serves both End and Nether portals; the Nether flow adds an optional post-claim step
+ * (target-side portal search/creation, see {@link PostClaimArrivalStep}) which runs
+ * between the sync gate and the placement settle. The arrival flow:
  *
  * <ol>
  *   <li>{@link #claimAndPlan} — called from {@code AsyncPlayerSpawnLocationEvent}
@@ -75,6 +79,24 @@ public final class TransferArrivalService {
     /** Entity-scheduler ticks to wait between the placement settle and the journal commit/Complete event. */
     private static final long COMPLETE_EVENT_DELAY_TICKS = 2L;
 
+    /**
+     * Optional pre-verify step for arrivals that need target-side work the moment the
+     * player is in the world but before the journal position is applied (the Nether flow
+     * resolves/creates the destination portal there). The step runs after the join, on the
+     * player's scheduler context; it may be asynchronous (chunk loads, database) and MUST
+     * call its callback exactly once. Failures must settle — passing {@code null} keeps the
+     * journal-position placement.
+     *
+     * <p>Steps apply only to operations they claim via {@link #appliesTo(TransferOperation)};
+     * everything else takes the plain join path unchanged.
+     */
+    public interface PostClaimArrivalStep {
+        boolean appliesTo(TransferOperation operation);
+
+        void run(ArrivalCompletion completion, Player player, ArrivalWorldLookup worlds,
+                 Consumer<ArrivalCompletion> done);
+    }
+
     /** What the spawn event should do with the player. */
     public record ArrivalClaim(ArrivalPlan plan, @Nullable Location location) {
     }
@@ -89,22 +111,38 @@ public final class TransferArrivalService {
     private final ArrivalPlanResolver plans;
     private final PositionValidator validator;
     private final SyncLookup syncLookup;
+    private final @Nullable PostClaimArrivalStep step;
     private final Map<UUID, ArrivalCompletion> pending = new ConcurrentHashMap<>();
 
     public TransferArrivalService(TransferBackend backend, Clock clock,
                                   ArrivalPlanResolver plans, PositionValidator validator) {
-        this(backend, clock, plans, validator, SyncLookup.platform());
+        this(backend, clock, plans, validator, SyncLookup.platform(), null);
     }
 
     /** Wiring seam for the sync gate — production uses the default platform lookup. */
     public TransferArrivalService(TransferBackend backend, Clock clock,
                                   ArrivalPlanResolver plans, PositionValidator validator,
                                   SyncLookup syncLookup) {
+        this(backend, clock, plans, validator, syncLookup, null);
+    }
+
+    /** Wiring seam for the post-claim step; the sync gate uses the platform lookup. */
+    public TransferArrivalService(TransferBackend backend, Clock clock,
+                                  ArrivalPlanResolver plans, PositionValidator validator,
+                                  @Nullable PostClaimArrivalStep step) {
+        this(backend, clock, plans, validator, SyncLookup.platform(), step);
+    }
+
+    /** Both wiring seams in one: sync gate + optional post-claim step. */
+    public TransferArrivalService(TransferBackend backend, Clock clock,
+                                  ArrivalPlanResolver plans, PositionValidator validator,
+                                  SyncLookup syncLookup, @Nullable PostClaimArrivalStep step) {
         this.backend = java.util.Objects.requireNonNull(backend, "backend");
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
         this.plans = java.util.Objects.requireNonNull(plans, "plans");
         this.validator = java.util.Objects.requireNonNull(validator, "validator");
         this.syncLookup = java.util.Objects.requireNonNull(syncLookup, "syncLookup");
+        this.step = step;
     }
 
     // ------------------------------------------------------- claim (async)
@@ -313,6 +351,30 @@ public final class TransferArrivalService {
                     + "(strategy=" + report.strategy() + ", degraded=true, took=" + report.durationMillis()
                     + " ms, op " + completion.operationId() + "); transfer proceeds — sync confirmation unavailable");
         }
+        PostClaimArrivalStep current = this.step;
+        if (current != null && current.appliesTo(completion.operation())) {
+            // the step settles asynchronously; guard against a misbehaving step that
+            // completes twice — settling twice would teleport twice
+            AtomicBoolean settled = new AtomicBoolean(false);
+            try {
+                current.run(completion, player, worlds, updated -> {
+                    if (settled.compareAndSet(false, true)) {
+                        settle(updated != null ? updated : completion, player, worlds);
+                    }
+                });
+            } catch (RuntimeException | LinkageError e) {
+                backend.diagnostics().accept("post-claim arrival step failed for operation "
+                        + completion.operationId() + " (" + e + "); settling at the journal position");
+                if (settled.compareAndSet(false, true)) {
+                    settle(completion, player, worlds);
+                }
+            }
+            return;
+        }
+        settle(completion, player, worlds);
+    }
+
+    private void settle(ArrivalCompletion completion, Player player, ArrivalWorldLookup worlds) {
         ArrivalCompletion verified = verifyAndFix(completion, player, worlds);
         backend.schedulers().runOnDelayed(player, () -> finalize(verified, player), COMPLETE_EVENT_DELAY_TICKS);
     }
@@ -415,7 +477,7 @@ public final class TransferArrivalService {
         }
         World world = target.getWorld();
         Position pos = positionOf(target);
-        if (!validator.isValid(world, pos, player.getUniqueId())) {
+        if (!validator.isValidFor(world, pos, player.getUniqueId(), completion.operation())) {
             World respawn = worlds.respawnWorld();
             if (respawn != null) {
                 Location safe = respawn.getSpawnLocation();

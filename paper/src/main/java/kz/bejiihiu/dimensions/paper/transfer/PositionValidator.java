@@ -1,8 +1,10 @@
 package kz.bejiihiu.dimensions.paper.transfer;
 
 import kz.bejiihiu.dimensions.common.model.Position;
+import kz.bejiihiu.dimensions.common.model.TransferOperation;
 
 import org.bukkit.World;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.UUID;
 
@@ -19,6 +21,16 @@ import java.util.UUID;
 public interface PositionValidator {
 
     boolean isValid(World world, Position position, UUID playerUuid);
+
+    /**
+     * Operation-aware veto. Defaults to {@link #isValid(World, Position, UUID)}; a validator
+     * that cares about the transfer cause (e.g. "plain portal arrivals always pass") overrides
+     * this instead of the bare check. Called with the claimed operation; {@code null} only in
+     * tests that never resolve a world.
+     */
+    default boolean isValidFor(World world, Position position, UUID playerUuid, @Nullable TransferOperation operation) {
+        return isValid(world, position, playerUuid);
+    }
 
     /** The no-op validator used for journal-position arrivals by default. */
     PositionValidator ALWAYS = (world, position, playerUuid) -> true;

@@ -230,18 +230,23 @@ the transfer — it only redirects placement.
 The orchestration is portal-family-agnostic. Nether reuses:
 
 - `PortalTransferService` (same health gate, journal, watchdog, result handling)
-- `TransferArrivalService` with **`ArrivalPlanResolver.journalPosition()`** (nether arrival
-  coordinates, possibly involving portal search/creation computed on the source and carried
-  in `target_position`)
-- `PositionValidator.ALWAYS`
+- `TransferArrivalService` with a **composite `ArrivalPlanResolver`** — portal operations
+  resolve to the journal position as a *provisional* spawn and are then relocated by the
+  settle step (the search/create runs on the destination backend); the End parts of the
+  composite delegate to `EndArrivalPlanResolver` (nether-specific: `NetherArrivalPlanResolver`)
+- `PositionValidator` chain: portal operations bypass the bed/anchor veto entirely (a stale
+  bed record must not redirect a nether arrival to world spawn); everything else delegates
+  to `BedAnchorValidator` (`NetherCausePositionValidator`)
 - `TransferChannelSink` semantics: the proxy answers `dimension_transfer_result` the same
   way, and the source-side watchdog behaves identically.
 
-New work for Nether: the portal search/creation algorithm (the research-heavy part), the
-vanilla delay behaviour, and the arrival coordinates. The End-specific bits —
-`EndArrivalPlanResolver`, `BedAnchorValidator`, `RespawnRecorder`, `EndPortalListener` — are
-not needed for Nether and must not be copied; the journal state machine and the wire
-protocol are shared.
+The nether wave (`docs/nether-portals.md`) additionally wires a `PostClaimArrivalStep`
+(`NetherArrivalExecutor`) into `TransferArrivalService`: after join it runs the vanilla
+destination-side portal search (shared `portal_index` + live-world verification + the
+64-chunk on-demand fill, full scan in degraded mode) or the vanilla creation algorithm, and
+the settle step relocates the player to the computed exit. The End-specific bits —
+`RespawnRecorder`, `EndPortalListener` — are still used for the end portals only; the
+journal state machine and the wire protocol are shared.
 
 ## What the entities wave plugs in
 
