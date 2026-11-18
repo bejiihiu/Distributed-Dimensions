@@ -53,10 +53,11 @@ distributed-dimensions (root, Gradle multi-module)
 └─ velocity — Velocity proxy companion (the "switch" side)
 ```
 
-Dependency direction: `paper` depends on `api` and `common`; `velocity` depends on `common` only;
-`api` and `common` do **not** depend on each other (`api` stays dependency-free except the
-Paper/Folia API, `compileOnly`). Nothing outside `common` is shared between the two platform
-jars.
+Dependency direction: `paper` depends on `api` and `common`; `velocity` depends on `common`
+(and declares `:api` in its build file, but never imports it — the proxy holds no public API
+surface). `api` and `common` do **not** depend on each other (`api` stays dependency-free
+except the Paper/Folia API, `compileOnly`). Nothing outside `common` is shared between the two
+platform jars.
 
 ### `api` — `kz.bejiihiu.dimensions.api` (+ `api.event`)
 
@@ -75,8 +76,8 @@ Platform-independent code, embedded (with relocations) into both platform jars:
 | Package | Contents |
 |---|---|
 | `common.model` | Domain types: `TransferOperation` (journal row + state machine), `DimensionId`, `Position`, `TransferRequest`/`TransferResult`, respawn query/answer records, `OperationState` (`CREATED → PREPARING → TARGET_CREATED → SOURCE_REMOVED → COMMITTED`, `FAILED` from any non-terminal state) |
-| `common.config` | YAML configuration: loader, heal-from-defaults, migrations (v0→v1→v2), `${VAR}` env expansion, `LoadReport`, env handling. Both platforms consume this |
-| `common.persistence` | The shared-database layer: `TransferOperationJournal` (SQL via HikariCP, or MongoDB), `RespawnPointStore`, `PortalIndex`, schema migrations (v1, v2), `DimensionPersistence` facade. H2 for tests |
+| `common.config` | YAML configuration: loader, heal-from-defaults, migrations (v0→v1→v2→v3), `${VAR}` env expansion, `LoadReport`, env handling. Both platforms consume this. v3 added `network.source-server` |
+| `common.persistence` | The shared-database layer: `TransferOperationJournal` (SQL via HikariCP, or MongoDB), `RespawnPointStore`, `PortalIndex`, `EntityPayloadStore`, schema migrations (v1–v3 — v3 adds `<prefix>entity_transfer_payloads`), `DimensionPersistence` facade. H2 for tests |
 | `common.protocol` | The wire protocol (`v=1`): `DimensionTransferRequestMessage`, `DimensionTransferResultMessage`, `EntityTransferMessage`/`AckMessage`, `PlayerRespawnPointQuery/AnswerMessage`, `ProtocolCodec` (JSON, 32,766-byte cap, hard version check) |
 | `common.nether` | Vanilla Nether portal math: coordinate conversion (8:1, Y untouched), portal search (grouping, largest-rectangle, spiral column generation), portal creation planning, world-border bounds/clamping |
 | `common.util` | `Clock`, `IdGenerator`, `Result`, math helpers |
@@ -92,9 +93,12 @@ The backend plugin (`distributed-dimensions-paper-<version>.jar`, `folia-support
 | `…paper.chunktickets` | `ChunkTicketService` — reproduces vanilla's 15 s destination-chunk ticket (refresh-on-touch, ring-of-8) |
 | `…paper.transfer` | The transfer orchestration itself (portal-family agnostic): `PortalTransferService` (source flow), `TransferArrivalService` (target flow), `TransferArrivalListener`, `TransferChannelSink`, `PluginMessageTransferChannel`, journal CAS logic, watchdog |
 | `…paper.end` | The End wave: `EndPortalListener` (entry/exit), `RespawnRecorder`, `BedAnchorValidator`, `EndArrivalPlanResolver`, `EndModule` (wiring) |
-| `…paper.sync` | External player-data sync integration (HuskSync API → reflection → blocking-login delay → degraded fallback). Bound at boot; **not yet called by the arrival flow** — see `docs/limitations.md` |
+| `…paper.nether` | The Nether wave: `NetherPortalListener` (completion seam → cancel → journal), `NetherPortalModule`, `NetherArrivalExecutor` (POI search → harvest → create fallback → exit placement), `PortalIndexer` (async index + reconcile-on-use), `NetherCrossingMarker` (dwell dedupe), `NetherPortalGamerules` (live source-world read), `PortalHarvester`/`ColumnScan`/`OfflineWorldAccess` |
+| `…paper.sync` | External player-data sync integration (HuskSync API → reflection → blocking-login delay → degraded fallback). Bound at boot and **awaited by the arrival flow** (`SyncOperations.awaitSync`, bounded by `sync.wait-timeout`); on timeout/error the player is not moved and the operation fails — see `docs/architecture-transfer.md` and `docs/limitations.md` |
+| `kz…entities` | Cross-server entity transfer (opt-in, disabled by default): `EntityPortalEventListener` (source interception), `AssemblyGraph` (passenger pre-order DFS), whitelist serializers (item/arrow/boat/minecart/horse family/armor stand/generic mob), `PortalCooldownRules` (vanilla 300/10/~2-tick windows, PDC-backed), `EntityArrivalService` (CAS claim → pre-order spawn → row drop = ack), `EntityJoinListener` (player-carrier fast path), `EntityTransferTracker` (source sweep), `EntityTransferModule` (poll 2 s / sweep 2 s / stale-claim watchdog 5 min / dead-letter reaper 7 d), `EntityTransferMetrics` |
+| `kz…admin` | `/dd` admin surface: `DdCommand` (info/reload/mirage), message bundles (EN/RU), `AdminSurface` wiring |
 | `kz…compat` | Public API bridge (`ApiBridge`, `PaperDistributedDimensionsAPI`), compat A/B/D machinery (`ArrivalEffectsService`, `PaperTransferManager`, `PdcCooldownStore`, `PortalCooldownRules`, `AdvancementGranter`) |
-| `kz…interop` | Cross-server transfer seam: `CrossServerTransfer` (interface), `ChannelCrossServerTransfer` (mirage guards / programmatic API path), `SourceServerName` (system property/env resolution), `TransferEvents` |
+| `kz…interop` | Cross-server transfer seam: `CrossServerTransfer` (interface), `ChannelCrossServerTransfer` (mirage guards / programmatic API path), `SourceServerName` (config → env → sysprop resolution), `TransferEvents` |
 | `kz…mirage` | Mirage (void stub) worlds: `MirageService`, `MirageGuard` (teleport/block-edit/unload guards), `MirageWorld`, `VoidChunkGenerator`, `VoidBiomeProvider`, `MirageNames`, `ArrivalClamp` |
 
 ### `velocity` — `kz.bejiihiu.dimensions.velocity.*`
@@ -139,9 +143,12 @@ Contract: `docs/velocity.md`.
    ◄── dimension_transfer_result {ok:true}        Player joins End backend
    (piggybacked on any live source connection;        AsyncPlayerSpawnLocationEvent
     correlated by request_id only)                     claim CAS → spawn location
-                                                       PlayerJoinEvent → place + 2 ticks
-                                                       → journal SOURCE_REMOVED→COMMITTED
-                                                       → DimensionTransferCompleteEvent
+                                                       PlayerJoinEvent → sync gate
+                                                          (awaitSync, bounded by sync.wait-timeout)
+                                                        → [nether post-claim step]
+                                                        → verify/place + 2 ticks
+                                                        → journal SOURCE_REMOVED→COMMITTED
+                                                        → DimensionTransferCompleteEvent
 ```
 
 Every arrow fails closed. A refusal at any source step leaves the player exactly where they
@@ -166,7 +173,13 @@ operation. Full failure matrix: `docs/architecture-transfer.md`.
    claim watchdog armed (2 × timeout) ──expires──► FAILED(TIMEOUT)
                           │
  PlayerJoinEvent          ▼
-   entity scheduler: verify placement
+   entity scheduler: sync gate FIRST — awaitSync(player)
+     (bounded by the sync integration's own timeout; never joined)
+     on timeout/error: player NOT moved, journal row FAILED,
+     DimensionTransferFailedEvent fires exactly once
+   [nether post-claim step, if applicable: PortalHarvester /
+    PortalIndexer / creation on the destination backend]
+   verify placement
      stored position vetoed (bed/anchor gone, anchor uncharged) → world spawn
      materially different placement → teleport (PLUGIN cause)
    two entity-scheduler ticks later:
@@ -177,24 +190,46 @@ operation. Full failure matrix: `docs/architecture-transfer.md`.
 
 The two-step shape is deliberate: the spawn-location event is the only honest async signal
 before the player is in the world, and `PlayerJoinEvent` is the earliest point world state
-is touchable — so validation and placement happen in two waves.
+is touchable — so validation and placement happen in two waves. The sync gate runs on the
+entity scheduler inside the join step, before any placement work: only a normally-settling
+sync wait proceeds to placement and the journal commit; anything else terminally fails the
+operation and leaves the player on the provisional spawn placement.
 
-### 3. Entity transfer (planned — not shipped)
+### 3. Entity transfer (opt-in — shipped, DB-mediated)
 
 ```text
- EntityPortalEvent (region thread) → cancel → TransferOperation (same journal shape)
-   → EntityTransferMessage ──► proxy ──refused today──► entity_transfer_ack{failed,"rejected"}
-                                                              │
-   target: createEntity at arrival point ◄── (Phase 5, unbuilt)
-   ack → source removes entity → COMMITTED, chunk tickets on target
+  source backend                                shared database                      target backend
+ ───────────────                             ───────────────                     ───────────────
+  EntityPortalEvent (region thread)
+    ↓ cooldown / category / exclusion checks
+    ↓ serialize passenger graph (pre-order DFS, depth ≤ 16, nodes ≤ 1024)
+    ↓ INSERT payload rows (op_id, seq)           ──► entity_transfer_payloads
+    ↓ cancel event (crossing consumed)           ──► PENDING rows
+    ↓ track assembly (UUID list, 10 min TTL)
+                                                                  poll (every 2 s, async)
+                                                                  find pending rows for me
+                                                                  CAS claim ALL rows of the op
+                                                                  decode → placement resolve
+                                                                  spawn pre-order + mounts
+                                                                  stamp cooldowns (300/10/~2)
+                                                                  chunk ticket on arrival
+                                                                  DELETE rows  ← the ack
+  source sweep (every 2 s)
+    rows gone / any FAILED → retire assembly
+    TTL expired (10 min)  → failOp + KEEP entities
 ```
 
-Wire messages and the journal states exist in `common.protocol` / `common.model`; the proxy
-**rejects** `entity_transfer` explicitly (fail-fast for the source); no backend entity
-orchestrator exists yet (`entities.cross-server-transfer.enabled` defaults `false` and nothing
-consumes it). Excluded forever by design: wither, ender dragon, heart-bound creaking.
-The public surface that does exist is the wire format and `EntityTransferEvent` in the API;
-see `docs/api.md` and `docs/limitations.md`.
+Anti-duplication is the invariant: the source retires its copies only after the target's row
+deletion (the ack) or on `FAILED` rows; a mid-graph spawn failure never rolls back (the worst
+case is loss of the remainder, never a duplicate). **Opt-in and disabled by default**
+(`entities.cross-server-transfer.enabled: false`); whitelist serializers per kind
+(item/arrow/boat/minecart/horse family/armor stand/generic mob + `unknown_degraded`); mirage
+stubs are never portals for entities; players in payloads are skipped (they take the player
+operation). The proxy is not involved at all; `entity_transfer` at the proxy gets a fail-fast
+`entity_transfer_ack{outcome="failed", error="rejected"}` for misrouted/legacy senders.
+`EntityTransferEvent` (api) is declared but never dispatched; `transfer(Entity, …)` returns
+`REJECTED` by design. Excluded forever: wither, ender dragon, heart-bound creaking. See
+`docs/entity-transfer.md` and `docs/limitations.md` (no live smoke yet).
 
 ### 4. Configuration & fail-closed semantics (both platforms)
 
@@ -251,8 +286,9 @@ Consequences, adopted deliberately:
 - **Piggybacked results correlate by `request_id` alone** — never by which connection carried
   them, because any connection of the requesting backend may carry the answer.
 - **Entity transfers onto an empty backend are fundamentally hard** for the same reason: the
-  ack cannot reach a backend with zero players online. Any future entity wave necessarily
-  leans on the shared journal (e.g. poll/timeout) rather than a pushed acknowledgement.
+  ack cannot reach a backend with zero players online. The shipped entity wave does exactly
+  this — it leans on the shared journal (poll/claim/delete-ack) rather than a pushed
+  acknowledgement, which is why the proxy has no role in it.
 
 This is why the shared SQL/Mongo database is a **hard requirement**, not a preference:
 without it the End exit portal routes every exit to world spawn, and the transfer journal —
@@ -265,7 +301,8 @@ Third-party plugins never talk to the proxy and never see our wire protocol. The
 - `DistributedDimensionsAPI.getInstance()` → `api.transfers()` / `api.dimensions()` / `api.portals()`;
 - events: `DimensionTransferStartEvent` (source, cancellable veto point),
   `DimensionTransferCompleteEvent` / `DimensionTransferFailedEvent` (exactly one per operation),
-  `EntityTransferEvent` (Phase 5, unused today);
+  `EntityTransferEvent` — declared but **never dispatched** in this build; the shipped entity
+  pipeline does not surface completion through it;
 - compat modes A (default, honest), B (opt-in synthetic `PlayerPortalEvent`/`PlayerTeleportEvent`
   with `from == to`, off by default), D (mirage worlds). **Mode C does not exist.**
 
@@ -284,6 +321,32 @@ Full contract: `docs/api.md`. Compat matrix and the never-list (`PlayerChangedWo
 `PlayerChangedWorldEvent` is **never** fired in any mode. `EntityPortalEvent` is **never**
 synthesized. Details: `docs/compat.md`. Mode C (NMS-level dimension transition spoofing) does
 not exist and never will.
+
+## World state — the actual policy (current truth, backed by the code)
+
+- **Time and weather are per-backend and never synchronized.** No cross-backend day/night or
+  weather policy exists or is planned. Each backend behaves like an isolated vanilla server.
+- **Gamerules are per-world and independent.** The plugin never changes gamerules on real
+  worlds — not the daylight/weather cycle rules, not anything. The only gamerules it sets
+  are on mirage stubs: `advance_time` / `advance_weather` pinned `false`, `spawn_mobs` pinned
+  `false` (plus pinned noon and permanent clear weather on the stubs only).
+- **Portal dwell gamerules** (`playersNetherPortalDefaultDelay`, 80;
+  `playersNetherPortalCreativeDelay`, 1) are vanilla's, read live from the source world per
+  completion for diagnostics — the plugin does not write them and never re-times the dwell.
+- **World border**: the source-side conversion clamps with the vanilla **default** bounds
+  (the destination border is unreadable before the switch); the arrival-time search/creation
+  on the destination backend clamps with that backend's **real** border
+  (`world.getWorldBorder()`); the mirage clamp pins ±29,999,984. Coordinate the three
+  backends' borders yourself — the plugin clamps to them but does not manage them.
+- **Dragon fight, end gateways, outer islands are out of scope by design** — native to the
+  End backend; no plugin code, no plugin tests; verified by the admin test loop
+  (`docs/installation.md` checklist), exactly as you would verify any vanilla End server.
+- **Configuration carries documented-no-effect keys under review**: `general.strict-vanilla-mode`,
+  `portals.nether.preserve-vanilla-{delay,search,creation,orientation}`, and
+  `network.transfer.max-retries` are parsed but nothing branches on them (the vanilla gamerules
+  are the supported dwell lever; the search/creation **is** the vanilla algorithm). A separate
+  cleanup branch is handling this; until it lands, treat them as inert — see
+  `docs/configuration.md` and `docs/limitations.md`.
 
 ## Build & release overview
 

@@ -268,15 +268,22 @@ the settle step relocates the player to the computed exit. The End-specific bits
 `RespawnRecorder`, `EndPortalListener` — are still used for the end portals only; the
 journal state machine and the wire protocol are shared.
 
-## What the entities wave plugs in
+## What the entities wave plugs in (as shipped)
 
-Non-player entities reuse `PortalTransferService`'s journal/watchdog shape and the same
-`TransferPending`/route-tracker idea, but: the request message differs, there is no
-`AsyncPlayerSpawnLocationEvent` (arrival is materialization of an entity on the target),
-there is no join event, and the cooldowns are vanillas (300/10/2 ticks by entity class, 0
-with a player passenger). `EntityPortalEvent` is the interception point, and the
-`EntityTransferEvent` api event replaces the join-based arrival. This document's failure
-matrix and idempotency rules apply unchanged.
+Non-player entities do **not** ride `PortalTransferService` or this document's request-message
+shape. The shipped design (`kz.bejiihiu.dimensions.entities`, see `docs/entity-transfer.md`)
+is DB-mediated: the source intercepts `EntityPortalEvent` (HIGH, honouring prior
+cancellations), serializes the passenger assembly into `<prefix>entity_transfer_payloads`
+rows (PK `(op_id, seq)`, `PENDING → CLAIMED → FAILED`, migration v3), and the target polls
+the shared store every ~2 s, CAS-claims the whole operation, spawns pre-order, stamps
+vanilla cooldowns (300/10/~2 ticks by entity class, 0 with a player passenger), adds the
+arrival chunk ticket — and the row deletion is the acknowledgement. The source sweeps every
+~2 s and retires its copies only on gone/FAILED rows; the player join fast-path exists for
+player-carrying assemblies. `EntityTransferEvent` in the api is declared but **never
+dispatched** in this build; `transfer(Entity, …)` returns `REJECTED` by design. The proxy is
+not involved. `EntityPortalEvent` remains the interception point; the journal-based
+idempotency rules of this document apply unchanged in spirit — exactly-one ownership is
+carried by row CAS, not by request dedup.
 
 ## Known limitations
 
@@ -294,5 +301,5 @@ matrix and idempotency rules apply unchanged.
 - **A player whose stored bed/anchor vanished** lands at world spawn with a log line; the
   record itself is kept (it may be valid again later).
 - **Chunk tickets are an optimization**: if the add fails, arrival proceeds normally.
-- **The migration v2 is applied on open** (`PersistenceFactory`); a backend that cannot
+- **Migrations v1–v3 are applied on open** (`PersistenceFactory`); a backend that cannot
   migrate enters fail-closed and refuses transfers entirely.

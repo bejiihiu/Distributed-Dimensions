@@ -175,10 +175,15 @@ entities:
       ring: true          # one-chunk ring, same TTL
 ```
 
-Own-server identity comes from `dimensions.source-server` (system property) or `DD_SOURCE_SERVER`
-(environment) — the same source the proxy uses to validate claimed sources. Payloads are routed
-by `target_server`, so this must match the name the source backends wrote; when unset, the poll
-is silent and the subsystem inert (portals refuse nothing, entities wait, source retracts on TTL).
+Own-server identity comes from the environment variable `DD_SOURCE_SERVER` or the JVM system
+property `-Ddimensions.source-server=<name>` — the entity module resolves it with
+`SourceServerName.resolve()` and therefore does **not** see the `network.source-server`
+config key (that key, added in config-version 3, feeds the mirage-guard / programmatic-API
+path instead); it is also not the same mechanism the proxy uses (the proxy validates claims
+against the requesting `ServerConnection`, never against your env). Payloads are routed by
+`target_server`, so this must match the name the source backends wrote; when unset, the poll
+is silent and the subsystem inert (portals refuse nothing, entities wait, source retracts on
+TTL).
 
 ## Metrics
 

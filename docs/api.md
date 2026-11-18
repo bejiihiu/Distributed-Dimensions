@@ -74,8 +74,12 @@ Optional<OperationState> state = DistributedDimensionsAPI.getInstance().transfer
 ```
 
 - `transfer(Player, DimensionId)` — the same machinery and guarantees as a portal transfer.
-- `transfer(Entity, DimensionId)` — non-player entities (Phase 5). Until Phase 5 ships,
-  implementations fail fast with `TransferError.REJECTED`.
+- `transfer(Entity, DimensionId)` — **fails fast with `TransferError.REJECTED` in this
+  build.** Entity transfer itself **is** shipped (DB-mediated, portal-driven, opt-in and
+  disabled by default — `entities.cross-server-transfer.enabled`, see
+  `docs/entity-transfer.md`), but it is not routed through this API method: there is no
+  entity operation id to mint here and no snapshot transport to trigger. Enabling entity
+  transfer means enabling the portal-driven pipeline, not calling this method.
 - `status(UUID)` — `Optional<OperationState>`; empty if this backend has no record (unknown id,
   or the completed operation has aged out of the journal).
 
@@ -117,9 +121,9 @@ Common payload (`DimensionTransferEvent` base type): `getOperationId()`, `getEnt
 | Event | Backend | Cancellable | Fires when |
 |---|---|---|---|
 | `DimensionTransferStartEvent` | source | **yes** | immediately before the proxy transfer request; cancelling aborts the whole operation |
-| `DimensionTransferCompleteEvent` | target | no | the player/entity is fully ready (sync done, location recorded); carries `getDurationMillis()` |
+| `DimensionTransferCompleteEvent` | target | no | the player is fully ready (sync done, location recorded); carries `getDurationMillis()`. Player operations only — entity operations never dispatch it in this build (they dispatch no public events at all). |
 | `DimensionTransferFailedEvent` | source **or** target — whichever terminally records the failure | no | the operation failed; carries `getError()` (`TransferError`), `getPhase()` (`OperationState` at failure detection), `isPlayerOnline()` |
-| `EntityTransferEvent` | target | no | Phase 5: a non-player entity snapshot was materialized; carries `getSnapshot()`. Player transfers never produce it. |
+| `EntityTransferEvent` | target | no | **Never dispatched in this build** — declared in the api, but the shipped entity pipeline (DB-mediated, `docs/entity-transfer.md`) does not surface completion through it; player transfers never produce it either. Do not listen expecting it to fire. |
 | `PortalFoundEvent` / `PortalCreatedEvent` | target | no | **unstable, internal detail — do not listen.** Portal resolution internals; payload/timing may change in any minor release. |
 
 ### Ordering guarantees
@@ -130,8 +134,8 @@ Common payload (`DimensionTransferEvent` base type): `getOperationId()`, `getEnt
    and is not reported as a failure.
 2. **Target ordering: `PlayerJoinEvent` → (external sync plugin finished) →
    `DimensionTransferCompleteEvent`.** Listeners that need the post-transfer state should listen
-   to the complete event, not to `PlayerJoinEvent`. For entity transfers, `EntityTransferEvent`
-   fires at materialization time, slightly before the complete event.
+   to the complete event, not to `PlayerJoinEvent`. Entity transfers dispatch no public entity
+   events in this build (`EntityTransferEvent` is declared but never fired).
 3. **Exactly one terminal event per operation:** either `DimensionTransferCompleteEvent` or
    `DimensionTransferFailedEvent`, delivered on the backend that terminally records the outcome.
    Pre-dispatch and proxy-unreachable failures fire on the source; failures detected after the

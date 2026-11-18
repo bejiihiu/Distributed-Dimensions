@@ -22,16 +22,17 @@ The support policy names four levels. Plain-English meaning, and the current pos
 
 | Level | Meaning | Current position |
 |---|---|---|
-| **1 — Player-compatible** | Players move between backends; portals work; coordinates and player state carry over | **Partially.** End portals work cross-server in code (entry + exit, wired at boot). The Nether portal flow (search/creation/arrival) is **not wired** — the algorithms exist in `common` and are unit-tested, but no portal listener calls them. Player coordinates/state travel via the external sync plugin — and since this build the arrival flow **awaits it** (`SyncOperations.awaitSync`, bounded by `sync.wait-timeout`) before moving the player or firing the complete event (see below). |
-| **2 — World-mechanics-compatible** | Portals, search, creation, End, Gateways, Dragon Fight per the targeted Java Edition | **Partially, End only.** The End backend runs native mechanics (dragon, crystals, exit portal, gateways, outer islands) with zero interception — that half is a real End. Cross-server Nether portals and end gateways landing cross-server are out. |
-| **3 — Entity-compatible** | Mobs, items, vehicles, passengers cross backends | **Not shipped.** Wire protocol + journal states exist; the proxy rejects `entity_transfer`; no backend orchestrator exists. `entities.cross-server-transfer.enabled` defaults `false` and nothing in this build consumes it. Excluded forever by design: wither, ender dragon, heart-bound creaking. |
+| **1 — Player-compatible** | Players move between backends; portals work; coordinates and player state carry over | **In code, never run live.** End portals work cross-server (entry + exit, wired at boot). The Nether portal flow (vanilla search/creation/arrival, wired at boot) ships too. Player coordinates/state travel via the external sync plugin — and since the sync-await fix the arrival flow **awaits it** (`SyncOperations.awaitSync`, bounded by `sync.wait-timeout`) before moving the player or firing the complete event (see below). |
+| **2 — World-mechanics-compatible** | Portals, search, creation, End, Gateways, Dragon Fight per the targeted Java Edition | **Mostly, in code.** The End backend runs native mechanics (dragon, crystals, exit portal, gateways, outer islands) with zero interception — that half is a real End. Nether portals ship cross-server: vanilla 16/128 search, vanilla creation with forced 2x3 placement, dwell gamerules honoured natively, arrival with portal search/creation on the destination. Unit-tested; never exercised live in this environment. |
+| **3 — Entity-compatible** | Mobs, items, vehicles, passengers cross backends | **Shipped — opt-in, experimental, disabled by default.** `entities.cross-server-transfer.enabled` defaults `false`. DB-mediated (payload rows in the shared store; no proxy channel): target claims by CAS, spawns, deletes rows (the ack); source retires only when rows are gone/FAILED. Anti-duplication is the invariant — worst case is loss of the remainder, never a duplicate. Never smoke-tested on a live network yet. Excluded forever by design: wither, ender dragon, heart-bound creaking. |
 | **4 — Vanilla parity** | All supported mechanics verified against a single server of the same version | **Not claimed, not achievable yet.** Calling this build Level 4 would be false advertising. |
 
-**The shape that is real today:** three backends + proxy; the End portal
-(Overworld → End and End → respawn point) is functional as code and covered by unit tests;
-the journal, proxy validation, arrival flow, mirage worlds, sync integration (bound and
-awaited) and the public API all exist. **Nothing has been proven against a live multi-JVM
-deployment of this stack — see "Untested in this environment".**
+**The shape that is real today:** three backends + proxy; both portal families are
+functional as code and covered by unit tests; entity transfer is code-complete behind an
+opt-in flag; the journal, proxy validation, arrival flow, mirage worlds, sync integration
+(bound and awaited), admin surfaces (`/dd`, `/ddproxy`) and the public API all exist.
+**Nothing has been proven against a live multi-JVM deployment of this stack — see
+"Untested in this environment".**
 
 ## What is fully supported in this build
 
@@ -40,6 +41,11 @@ Treat this list as the maximum, and read the caveats under each:
 - **Cross-server End portals (entry)** — `PlayerPortalEvent` cancel → journal → proxy →
   arrival on the End backend at the obsidian-platform anchor `(100.5, 49, 0.5)` facing west.
   Unit-tested; never validated live in this environment.
+- **Cross-server Nether portals** — `PlayerPortalEvent` cancel → journal → proxy → arrival
+  on the Nether/overworld backend, where the vanilla destination sequence runs: POI search
+  (radius 16 / 128) → nearest by 3D squared distance → vanilla creation if nothing found →
+  exit placement. Vanilla dwell gamerules honoured natively. Unit-tested; never validated
+  live in this environment.
 - **Cross-server End exit portal** — resolves the recorded respawn point from the **shared
   database** (bed → overworld family, anchor → nether family), re-validates it on arrival,
   falls back to world spawn. Requires the shared DB on all three backends.
@@ -49,15 +55,24 @@ Treat this list as the maximum, and read the caveats under each:
 - **The transfer journal + proxy validation** — CAS state machine, exactly one terminal
   event per operation, watchdogs at 2× `network.transfer.timeout`, proxy-side idempotency by
   `request_id` (~10 min replay cache, 512 in-flight / 1024 completed bounds).
+- **Entity transfer — opt-in, experimental, disabled by default** —
+  `entities.cross-server-transfer.enabled` defaults `false`. Shipped as a DB-mediated
+  pipeline (payload rows `<prefix>entity_transfer_payloads`, migration v3); the proxy is
+  not involved. Not smoke-tested live. The safe default remains: no entity crosses unless
+  you turn this on and accept that risk knowingly.
 - **Mirage worlds** — void stub worlds for foreign dimensions (correct environment/dimension
   codec, `autoSave=false`, inert, unload-cancelled, edit-blocked). They exist so probes
   don't crash; they are not content.
 - **Public API + compat A/D** — events, services, advancement criteria granting, mirage guard
-  routing (`MIRAGE_TELEPORT`).
+  routing (`MIRAGE_TELEPORT`). Honest edges: `EntityTransferEvent` is declared in the api but
+  never dispatched in this build; `transfer(Entity, …)` returns `REJECTED` by design.
+- **Admin surfaces** — `/dd` on backends (`info` / `reload` / `mirage`) and `/ddproxy` on
+  the proxy (`status` / `reload` / `transfers`), one permission node
+  (`distributeddimensions.admin`, op default).
 - **Chunk tickets on arrival** — reproduces the vanilla ~15 s destination-chunk window with
   plugin tickets (refresh on touch; ring-of-8 optional). An optimization, never a gate.
 
-Everything else is either partial, planned, or absent.
+Everything else is either partial, experimental, or absent.
 
 ## Compat modes — what each does and does NOT provide
 
@@ -89,8 +104,8 @@ false` and should be treated as a compat shim, not a contract.**
 never fires (cancelled); block edits in a mirage never apply (cancelled, rate-limited hint);
 a third-party `teleport()` into a mirage returns `false` and the player re-routes to the real
 backend with cause `MIRAGE_TELEPORT`. Entity teleports into a mirage are cancelled and go
-nowhere (entity transfers are not shipped). `%world_name%`-style placeholders will list three
-worlds per backend — that is the point, not a bug.
+nowhere (mirage stubs are never portals for entities). `%world_name%`-style placeholders will
+list three worlds per backend — that is the point, not a bug.
 
 ## Known deviations from vanilla (deliberate, documented)
 
@@ -103,19 +118,21 @@ worlds per backend — that is the point, not a bug.
   causes via `PlayerSetSpawnEvent` are.
 - **Custom dimensions:** no respawn records, no exit-portal routing; a bed there is silently
   untracked by design.
-- **Post-exit portal cooldown is not tracked.** The PDC-backed cooldown mechanism exists
-  (`distributeddimensions:portal_cooldown_at` / `portal_cooldown_op`) but **nothing in this
-  build stamps it**, so `PortalRegistry.isPortalCoolingDown(entity)` almost always answers
-  `false`, and nothing prevents an immediate re-trigger beyond tick order and the fact that
-  the arrival lands the player at their respawn location rather than inside the portal. The
-  Nether wave is what will stamp it; until then do not build UX on it.
+- **Portal cooldown bookkeeping is split.** The entity transfer pipeline stamps the PDC
+  keys (`distributeddimensions:portal_cooldown_at` / `portal_cooldown_op`) on arrival and
+  checks them source-side, mirroring vanilla's 300/10/~2-tick table (never for an assembly
+  carrying a player). The *player* crossing flow does not stamp PDC cooldowns at all — it
+  uses a process-local marker (`NetherCrossingMarker`, 250 ms dedupe per player) to suppress
+  double completions inside one dwell, and vanilla re-arms at the gamerule cadence. So
+  `PortalRegistry.isPortalCoolingDown(entity)` answers truthfully for entities the entity
+  pipeline stamped, and almost always `false` otherwise — do not build player-facing UX on it.
 - **Remote border approximation.** World borders are server-local configuration. Nothing in
   this build replicates a destination backend's configured border across the proxy: portal
   search/creation math (`common.nether`) takes its `WorldBorderBounds` at the call site, the
   mirage clamp pins ±29,999,984, and the platform passes the *local* border at runtime. A
   network with a heavily shrunk or asymmetric custom border on one backend can push
   portal-search/creation decisions slightly off single-server vanilla behaviour. Vanilla
-  default borders match.
+  default borders match. Full border policy: see "World state — the actual policy" below.
 - **`WorldUnloadEvent` on mirages is always cancelled.** Deliberate.
 - **Anchor requires ≥ 1 charge; bed requires a bed-shaped block** (head or paired foot
   neighbour). Otherwise: world spawn, operation still completes, log line written, record kept (the
@@ -124,6 +141,42 @@ worlds per backend — that is the point, not a bug.
   ticket is an optimization, never an integrity requirement.
 - **One End backend per network.** Mirrored Ends are unsupported by design; each backend's
   dimension codec is correct natively and there is exactly one routing slot per dimension.
+
+## World state — the actual policy (time, weather, gamerules, border)
+
+- **Time and weather are per-backend and never synchronized.** There is no cross-backend
+  day/night or weather policy in this plugin — not a hidden one, not a partial one. Each
+  backend behaves like an isolated vanilla server with its own clock and weather; expecting
+  one "network-wide sunrise" is a category error.
+- **Gamerules are per-world and independent.** The plugin never changes gamerules on real
+  worlds — including the daylight/weather cycle rules. The only gamerules this plugin ever
+  sets are on mirage stubs: `advance_time` / `advance_weather` pinned `false`, `spawn_mobs`
+  pinned `false` (plus a pinned noon and permanent clear weather). The Nether portal dwell
+  gamerules (`playersNetherPortalDefaultDelay`, default 80;
+  `playersNetherPortalCreativeDelay`, default 1) are **read live from the source world** per
+  completion for diagnostics, and the dwell itself is vanilla's; the plugin never writes them.
+- **World border: the source-side conversion clamps with the vanilla DEFAULT bounds**
+  (overworld `±29_999_985`, nether `±3_749_998.125`) because the destination backend's
+  configured border is unreadable before the switch. **The arrival-time search and creation
+  on the destination backend clamp with that backend's REAL border** (`world.getWorldBorder()`).
+  A network with heavily shrunk or asymmetric custom borders on one backend can push
+  portal-search/creation decisions slightly off single-server vanilla behaviour; default
+  borders match. Keep the three backends' borders coordinated yourself — the plugin clamps
+  to them but does not manage, replicate or validate them.
+- **Mirage worlds pin noon and clear weather, and disable the daylight/weather cycle and
+  mob spawning — on the mirage stubs only.** Real worlds are never touched.
+- **Dragon fight, end gateways, outer islands and the dragon egg are out of scope by
+  design** — native to the End backend, zero interception, no plugin code, no plugin tests.
+  Compatibility verification for those mechanics is left to the admin test loop
+  (`docs/installation.md` checklist), exactly as you would verify any vanilla End server.
+- **Config keys with no consumer in this build.** `general.strict-vanilla-mode`,
+  `portals.nether.preserve-vanilla-delay` / `-search` / `-creation` / `-orientation`, and
+  `network.transfer.max-retries` are parsed and documented but nothing branches on them
+  (the vanilla gamerules are the supported lever for the dwell; the search/creation **is**
+  the vanilla algorithm). `portals.gateway.enabled`, `network.proxy.enabled` and the four
+  `debug.*` flags are likewise inert. A separate cleanup branch is handling this under
+  review — until it lands, treat all of these as having no effect. See
+  `docs/configuration.md`.
 
 ## Player-data sync — awaited, and honest about what that proves (read this twice)
 
@@ -166,26 +219,45 @@ travels without a player has **no carrier at all**: the source cannot emit a
 has no way to push the acknowledgement back to a backend with zero players online
 (`RegisteredServer.sendPluginMessage` returns `false` when nobody is connected there).
 
-That is why entity transfers need an assumed or out-of-band confirmation path — and why the
-planned design is a **poll, not a push**. The Phase 5 design has the source backend sweep its
-tracked entity operations on a fixed cadence (~every 2 s / 40 ticks), directly against the
-shared store: for each tracked operation id, **zero rows left** means the target claimed and
-materialized and acknowledged → the source removes its copy; **any row FAILED** → the source
-keeps its entities and logs SEVERE (no-dupe priority over delivery); **TTL expired without
-ack** → the source CASes the row to FAILED and keeps the entities with a warning. The poll
-exists precisely because the acknowledgement cannot physically ride an empty backend's
-connections. None of this is implemented in this build:
+That is why entity transfers are **DB-mediated, not proxy-routed**. This is shipped code,
+not a sketch — and it is **opt-in, experimental, and disabled by default**:
+`entities.cross-server-transfer.enabled: false` until you set it to `true`. What the build
+does when you enable it:
 
-- `entity_transfer` at the proxy → immediate
-  `entity_transfer_ack{outcome="failed", error="rejected"}` — the source fails fast instead
-  of hanging on a response that physically cannot arrive.
-- The backend never even attempts the request: there is no entity orchestrator, no poll, no
-  sweep — and `transfer(Entity, …)` on the API fails fast with `TransferError.REJECTED`.
-- Excluded forever by design: wither, ender dragon, heart-bound creaking. These entities
-  never cross backends; entity cooldown rules (300/10/2 ticks, none with a player passenger)
-  exist only in design and in `PortalRegistry`'s report.
-- Don't build on Phase 5 until it ships. The safe assumption is **no entity ever changes
-  backends silently** — because it doesn't happen at all.
+- The source backend watches `EntityPortalEvent` (HIGH, honouring prior cancellations) and,
+  on a portal crossing, serializes the passenger assembly (whitelist serializers; depth ≤ 16,
+  nodes ≤ 1024) into payload rows — `<prefix>entity_transfer_payloads`, PK `(op_id, seq)`,
+  `PENDING → CLAIMED → FAILED`, migration v3.
+- The target backend polls the shared store every ~2 s, CAS-claims **all** rows of an
+  operation (all-or-none), spawns the assembly pre-order with vanilla portal cooldowns
+  stamped (300 t ordinary / 10 t vehicles / ~2 t projectiles; never for a player-carrying
+  assembly), adds the arrival chunk ticket — and **deletes the rows; that deletion is the
+  acknowledgement**.
+- The source sweeps every ~2 s: rows gone → retire the assembly; any row `FAILED` → retire it
+  too (no-duplication wins over delivery — the target may have spawned a prefix); expired
+  (10 min) → flip rows to FAILED and keep the entities. A stale-claim watchdog (5 min) and a
+  dead-letter reaper (rows older than 7 days) bound the rest.
+- Excluded forever by design: wither, ender dragon, heart-bound creaking (checked twice —
+  listener entry and graph build). Leashed entities never transfer. Player passengers never
+  travel in the entity payload (they go through the player operation); an arriving vehicle
+  has no seats filled.
+- `transfer(Entity, …)` on the public API still fails fast with `TransferError.REJECTED` —
+  the pipeline is portal-driven, not API-driven. `EntityTransferEvent` (api) is declared but
+  **never dispatched** in this build.
+- **Worst case is total loss of the remainder, never a duplicate** (partial spawn failure
+  leaves the prefix in the world and the remainder permanently lost). Anti-duplication is
+  the invariant; availability is not.
+- The proxy never routes entities: an `entity_transfer` message at the proxy gets an
+  immediate `entity_transfer_ack{outcome="failed", error="rejected"}` fail-fast. The shipped
+  pipeline never sends one.
+
+Honest limits: the whole path has **never been exercised on a live server** (no live smoke —
+item → backend, minecart → nether playground are the untested proofs); it is covered by unit
+tests (serializers, assembly graph, sweep decision matrix, payload-store contract tests on
+H2-PostgreSQL-mode). Mirage worlds are never entity portals. End exit lands at the
+destination world spawn (entities have no respawn records). Payloads are bounded by the
+`TEXT` row size (~48 KiB on MySQL; refused, never truncated). If you enable this on a
+production network before a live smoke has happened, you are the test.
 
 ## Journal & proxy edge cases (accepted, by design)
 
@@ -200,8 +272,8 @@ connections. None of this is implemented in this build:
   `isPlayerOnline() == false`; the entity reference can throw or return stale data. The one
   designed gap: an offline player can cost the target its failed-event dispatch; never the
   journal's terminal state.
-- **Migration v2 runs on open** (`PersistenceFactory`); a backend that cannot migrate is
-  fail-closed forever until manually fixed.
+- **Migrations v1–v3 run on open** (`PersistenceFactory`); a backend that cannot migrate is
+  fail-closed forever until manually fixed. (v3: `<prefix>entity_transfer_payloads`.)
 - **`CONNECTION_IN_PROGRESS` is reported as `ok: true`** — an in-flight connection for the
   same player is treated as success-ish; if it lands on a *different* server than the target,
   the player will not arrive where claimed. Unavoidable without veto APIs, documented in
@@ -270,32 +342,51 @@ These are true gaps, not formalities. No item below has been run against a live 
 of this stack in the development environment:
 
 1. **A full live network** (Velocity 4.2 + 3 Paper 26.3 backends + a real database): no
-   end-to-end run has been executed. All transfer-path testing is unit-level with fakes
-   (`FakeSchedulers`, `FakeTransferBackend`, test fixtures), plus codec/journal tests.
+   end-to-end run has been executed and no player has ever transferred. The stack *has*
+   been booted live in this environment (proxy + three Paper 26.3 backends on one machine):
+   the proxy enabled its channel, the backends booted with persistence fail-closed (no DB
+   present), mirage stubs materialized in-memory with foreign stems disabled, `sync` bound
+   level D, `/dd` registered, ports answered pings. No logins, no transfers, no portal
+   crossings, no HuskSync — none of that was exercised. Unit-level evidence stays: fakes
+   (`FakeSchedulers`, `FakeTransferBackend`, test fixtures), codec/journal tests.
 2. **Live HuskSync integration** — the A-level bridge is API-surface-verified against the
    `husksync-bukkit:4.1.0+26.3` artifact and unit-tested against fakes; **never** bound to a
-   real HuskSync instance on a real server. Folia + HuskSync is doubly unverified.
+   real HuskSync instance on a real server (level D degraded-fallback is what bound live in
+   the boot smoke). Folia + HuskSync is doubly unverified.
 3. **MongoDB behind the plugin** — contract tests exist and are correct in shape, but they
    are skipped unless `TEST_MONGODB_URI` is set; no CI or dev run has exercised them. All
    green SQL-side evidence is **H2 in PostgreSQL mode** — MySQL 8, MariaDB, and real
    PostgreSQL wire behaviour (index DDL, collation, upsert retry semantics) are untested here.
-   Migration v2 is validated on H2 only.
+   Migrations are validated on H2 only.
 4. **Folia runtime** — the scheduler facade is unit-tested via fakes; no live Folia server
    run is documented. Region-boundary edge behaviour (entity retirement mid-task, portal
    block on the exact region border) is unverified on real Folia.
-5. **Nether portal wave** — the math (conversion, search, creation) is unit-tested, but the
-   cross-server Nether flow has **no runtime path at all**; nothing about it is "supported"
-   in practice.
-6. **Mirage worlds on a live Paper 26.3** — mirage creation, guard interception, and
-   `WorldUnloadEvent` cancellation are unit-tested; never run on a live server.
-7. **`/ddproxy` against a live proxy** — command logic is unit-tested; never typed by a
-   human into a real Velocity console.
-8. **Version pinning** — `api-version: '26.3'` and `paper-api: 26.3.build.+` pin the family;
-   older Paper/Folia/Velocity combos are untested and mostly unsupported.
-9. **26.3-specific API behaviour cited in compat docs** (e.g. `@Internal` portal constructors
-   actually dispatching) is verified by compilation and unit tests, not by a live server.
-10. **Degraded-mode end-to-end** (kill the database mid-run, watch the backends refuse,
-    restart clean) — designed and unit-tested; never rehearsed live.
+5. **Nether portal wave** — the full cross-server Nether flow (search/creation/arrival,
+   gamerule honouring, portal index) is implemented and unit-tested, but has never been
+   exercised live; nothing about it is "supported" in practice until a live crossing happens.
+6. **Mirage worlds** — mirage creation at boot has been **verified on a live Paper 26.3**
+   in this environment (void stubs materialized in-memory with the foreign stems disabled;
+   on a fresh default boot all three dimensions load, so no stubs are created). Guard
+   interception, teleport-into-mirage routing, and `WorldUnloadEvent` cancellation are
+   unit-tested only — never exercised on a live server.
+7. **Entity transfers** — code-complete and unit/contract-tested (H2 PostgreSQL mode), but
+   never exercised on a live network: no item → backend crossing, no minecart → nether run,
+   no live poll/claim cycle. Treat as unproven.
+8. **Dragon fight, end gateways, outer islands** — out of scope by design (native
+   mechanics of the End backend; no plugin code and no plugin tests). Compatibility
+   verification for them is left to the admin test loop (`docs/installation.md` checklist) —
+   not something this build ships as tested.
+9. **`/ddproxy` in a human's hands** — `/ddproxy` registered at boot on a live Velocity
+   in the smoke run, but the commands have never been typed by a human into a real proxy
+   console (logic is unit-tested).
+10. **Version pinning** — `api-version: '26.3'` and `paper-api: 26.3.build.+` pin the family;
+    older Paper/Folia/Velocity combos are untested and mostly unsupported.
+11. **26.3-specific API behaviour cited in compat docs** (e.g. `@Internal` portal constructors
+    actually dispatching) is verified by compilation and unit tests, not by a live server.
+12. **Degraded-mode end-to-end** (kill the database mid-run, watch the backends refuse,
+    restart clean) — designed and unit-tested; never rehearsed live. (The boot smoke *did*
+    observe the persistence fail-closed path engage live — backends refused transfers with
+    `SEVERE` lines and stayed enabled; nothing was killed mid-run.)
 
 If you deploy this, you are the first production run. Plan accordingly: stage it, back it
 up, and keep the previous jar.
@@ -309,7 +400,8 @@ up, and keep the previous jar.
 - Player-data sync is outsourced, and the arrival flow awaits it (bounded by
   `sync.wait-timeout`) before moving or completing the transfer — but only the sync
   plugin can prove what actually landed.
-- Entity transfers don't exist. Nether cross-server portals don't exist. Vanilla parity is a
-  direction, not a claim.
+- Entity transfers are opt-in (disabled by default), never exercised live, and worst-case
+  lossy — never duplicative. Nether cross-server portals exist in code, never exercised
+  live. Vanilla parity is a direction, not a claim.
 - If someone tells you this build is "vanilla parity at level 4", they have not read this
   file.

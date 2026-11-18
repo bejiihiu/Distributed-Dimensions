@@ -15,10 +15,19 @@ If you are looking for how the backend talks to this plugin, skip to
 - `distributed-dimensions-velocity-<version>.jar` in `plugins/` (built with
   `./gradlew :velocity:build`, the artifact is `velocity/build/libs/`)
 
-No database is required or used. The proxy keeps everything in memory and holds only
-volatile (per-process, restart-bound) state. Durable state - transfer journals, operation
-ids, respawn points - lives in the backends' shared database and is none of the proxy's
-business.
+No database is opened by the proxy — all state is in-memory and per-process (a couple of
+bounded TTL caches), and durable state (transfer journals, operation ids, respawn
+points) lives in the backends' shared database and is none of the proxy's business.
+
+One load-time caveat: although nothing ever opens a connection, the bundled config's
+`database.password: "${DB_PASSWORD}"` **is expanded at load**, on every platform including
+this one. On a fresh proxy boot without `DB_PASSWORD` in the environment, the plugin never
+reaches its fail-closed/reload path — the channel stays registered but no listeners or
+`/ddproxy` are behind it, and transfers get silence instead of `UNAVAILABLE`. Set
+`DB_PASSWORD` (any value) in the proxy's environment, or edit the value to a literal in
+`plugins/distributeddimensions/config.yml`. Boot behaviour for an unparseable bundled
+config is being hardened in a parallel branch (diagnostic-degraded boot instead of death);
+either way, an unparseable config means no transfer routing — see `docs/installation.md` §5.
 
 ## Boot sequence
 
@@ -129,7 +138,7 @@ are counted (`unsolicited-messages`):
 | `player_respawn_point_query` | logged and ignored **without an answer**; the proxy deliberately does not answer respawn queries. A fabricated `respawn_point: null` answer would be indistinguishable from "no respawn point exists" and would corrupt the end-exit flow. Backends own bed/anchor state via the shared database and fall back to world spawn on their own timeout. |
 | `player_respawn_point_answer` | logged and ignored (unsolicited) |
 | `respawn_anchor_hint` | logged and ignored (unsolicited) |
-| `entity_transfer` | refused with `entity_transfer_ack{outcome="failed", error="rejected", message="entity transfers are not enabled on this proxy"}` so the source fails fast instead of waiting out its timeout |
+| `entity_transfer` | refused with `entity_transfer_ack{outcome="failed", error="rejected", message="entity transfers are not enabled on this proxy"}` so the source fails fast instead of waiting out its timeout. The shipped entity transfer (Phase 5, `docs/entity-transfer.md`) is DB-mediated and **never rides this channel at all** — this refusal is the fail-fast answer for a misrouted or legacy sender |
 | `entity_transfer_ack` | logged and ignored (unsolicited) |
 
 If these show up in your server logs, the backend is talking to the proxy with the wrong
@@ -327,7 +336,10 @@ network:
 Notes:
 
 - `network.proxy.enabled` is a backend-advertised flag; the proxy does not read it.
-- The proxy ignores `database.*` and does not need them.
+- The proxy does not need `database.*` for anything it does, but the loader still
+  **expands `${VAR}` in `database.*` at load time** — see "Requirements" above and
+  `docs/installation.md` §5. In short: make `DB_PASSWORD` resolvable or use a literal.
+- `network.source-server` is a backend-side key the proxy never reads.
 - Server names must match the registered names in `velocity.toml` exactly.
 - `dimension` values are namespaced resource keys; they are matched literally.
 
@@ -402,7 +414,9 @@ Backend implementers, this is the contract:
 - The proxy does not authenticate the *payload* cryptographically; the trust perimeter is
   "registered backends only" enforced by `ServerConnection` + server-name + UUID checks.
   Do not route this channel through anything that lets untrusted backends in.
-- Entity transfer routing is not implemented (refusals only, see the table above).
+- Entity transfer is implemented on the backends (DB-mediated payloads, opt-in,
+  `entities.cross-server-transfer.enabled: false` by default — see `docs/entity-transfer.md`)
+  and never rides this channel; the proxy refuses any `entity_transfer` it sees, as designed.
 - The proxy cannot prevent a backend from claiming a different `source_server` than it is;
   the check is between the claim and the connection it arrived on (which is all the
   information the proxy has).

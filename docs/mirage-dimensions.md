@@ -5,6 +5,12 @@ server therefore hosts only *its own* real dimension. A **mirage** is a void stu
 backend plugin registers for the other dimensions, so plugins that probe for them keep working
 on every backend.
 
+> Verification status, honestly: mirage world creation at boot is **live-verified on
+> Paper 26.3** in this environment (void stubs materialized in-memory once the foreign
+> stems were disabled). Guard interception, teleport-into-mirage routing and
+> `WorldUnloadEvent` cancellation are unit-tested only and have **never been exercised on a
+> live server** — see `docs/limitations.md`.
+
 On startup, for each canonical name (see *Names* below) the plugin creates a world that:
 
 - has the right Bukkit environment (`NORMAL` / `NETHER` / `THE_END`) — so
@@ -16,7 +22,9 @@ On startup, for each canonical name (see *Names* below) the plugin creates a wor
 - never writes anything: `autoSave` is off, no chunk tickets are ever requested for a mirage,
   and no `*.mca` region files are created for it;
 - is pinned to noon, clear weather, `spawn_mobs=false`, Peaceful difficulty, and spawn at
-  (0, 100, 0) — a dead spot even if something forces a chunk load.
+  (0, 100, 0) — a dead spot even if something forces a chunk load. The stubs also pin
+  `advance_time` and `advance_weather` off — the plugin never touches gamerules on real
+  worlds.
 
 A mirage is created **only if this backend does not already have a real world under that
 name** (`Bukkit.getWorld(name) == null`). A real overworld/nether/end on this server is never
@@ -26,9 +34,15 @@ A/B setup.
 
 ## What admins should expect to see
 
-Every backend registers all three worlds. So on an overworld backend you will see all of
-`world`, `world_nether`, `world_the_end` in world lists, tab-completion, and `%world_name%`
-placeholders. That is the point of mirages — not a bug. The mirage worlds show up empty:
+On a backend whose foreign stems are disabled (the production layout from
+`docs/installation.md` §6.3) you will see all three of `world` / `world_nether` /
+`world_the_end` in world lists, tab-completion, and `%world_name%` placeholders — the two
+foreign ones are empty void stubs. **On a stock fresh boot, Paper loads all three stems on
+every backend, so no mirages are created at all** — a stock backend simply carries three
+real worlds, and mirages only ever fill gaps. That is not a broken setup; it is the
+invariant (one world per name) applied to a fully-stemmed server.
+
+The mirage worlds show up empty:
 
 - in `Bukkit.getWorld("world_nether")` and friends: non-null;
 - in-game: no players, no mobs, no blocks, nothing to do there;
@@ -52,7 +66,7 @@ to the backend that hosts that dimension. This covers `player.teleport(...)`, `/
 |---|---|
 | `player.teleport(mirageWorld)` | teleport cancelled; player moved to the real backend hosting the dimension; cause `MIRAGE_TELEPORT` |
 | respawn with respawn point inside a mirage | player briefly appears in the void, is rerouted within a tick or so |
-| entity teleport into a mirage | teleport cancelled; nothing else happens (entity transfers are not shipped yet) |
+| entity teleport into a mirage | teleport cancelled; nothing else happens (mirage stubs are never portals for entities) |
 | `WorldUnloadEvent` for a mirage | cancelled — mirages never unload |
 | blocks placed/broken in a mirage | cancelled with a rate-limited hint to the player; `mirage.block-edits` |
 | mirage interaction by a non-player entity | block changes cancelled silently |

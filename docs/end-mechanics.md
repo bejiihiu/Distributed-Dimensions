@@ -170,12 +170,14 @@ index. The migration runs on `PersistenceFactory.open`, the same as v1.
 - A bed recorded in the nether is impossible to create by vanilla play (beds explode
   there) but would be stored and honoured if set by other means; the validator is the
   arbiter.
-- HuskSync and other sync plugins may move the player's inventory on join; ordering
-  relative to `DimensionTransferCompleteEvent` is documented in
-  `docs/architecture-transfer.md` and is not guaranteed until the sync wave lands.
-- Cross-server entity transport through End portals is a separate wave (the Nether wave's
-  orchestration applies; wither/dragon/creaking heart exclusions are part of the vanilla
-  parity table there).
+- HuskSync and other sync plugins move the player's inventory on join; this build **awaits**
+  the sync plugin before placement and before `DimensionTransferCompleteEvent` — a timeout
+  fails the transfer loudly rather than delivering stale data. Ordering is documented in
+  `docs/architecture-transfer.md` and `docs/player-sync.md`.
+- Cross-server entity transport through End portals is shipped — opt-in
+  (`entities.cross-server-transfer.enabled`, default false), DB-mediated, worst case total
+  loss of the remainder and never a duplicate; wither/dragon/creaking never cross. See
+  `docs/entity-transfer.md` and `docs/limitations.md`.
 
 ## Test matrix
 

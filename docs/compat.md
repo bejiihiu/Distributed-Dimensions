@@ -119,10 +119,19 @@ PlayerJoinEvent → bounded wait on the external sync plugin (sync.wait-timeout)
                 → DimensionTransferCompleteEvent
 ```
 
+For nether arrivals a **post-claim step** (the vanilla portal search/creation on the
+destination backend) runs between the sync wait and the placement settle — see
+`docs/nether-portals.md`.
+
 `PlayerJoinEvent` fires before `DimensionTransferCompleteEvent` — always, and the complete
-event only fires after the sync wait settles normally. If the sync wait fails, the player
-is not moved, a `DimensionTransferFailedEvent` fires instead, and the complete event never
-does. If you need the post-transfer world state, wait for `CompleteEvent`.
+event only fires after the sync wait settles normally. The sync wait and the placement
+both run on the entity scheduler. Arrival effects are attributed by the freshest usable
+journal row in a 120-second wall-clock window (`ArrivalAttribution`, newest fresh `updatedAt`
+wins, `FAILED` rows ignored) — the design accepts double attribution inside the window
+because the effects are idempotent; it exists to avoid resurrecting stale rows, not to
+identify the exact operation. If the sync wait fails, the player is not moved, a
+`DimensionTransferFailedEvent` fires instead, and the complete event never does. If you
+need the post-transfer world state, wait for `CompleteEvent`.
 
 `DimensionTransferFailedEvent` fires exactly once per operation, on the backend that
 terminally recorded the failure:
@@ -180,8 +189,10 @@ Read those and nothing else.
 for an entity carrying a player passenger). The data lives on the entity itself
 (`distributeddimensions:portal_cooldown_at` / `distributeddimensions:portal_cooldown_op`,
 persistent data container) — no database is involved, and it is available on every backend.
-Stamping is done by the portal waves; today the map is populated by nothing in this wave, so
-the answer is almost always `false`.
+The only writer today is the entity transfer pipeline (stamped on arrival; see
+`docs/entity-transfer.md`); player crossings do **not** stamp PDC cooldowns (they use a
+process-local `NetherCrossingMarker`, 250 ms dedupe), so for a player entity the answer is
+almost always `false`. Don't build player-facing UX on it.
 
 ## Error codes
 
