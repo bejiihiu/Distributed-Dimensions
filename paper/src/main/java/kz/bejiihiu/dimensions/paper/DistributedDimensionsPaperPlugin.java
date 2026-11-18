@@ -1,5 +1,6 @@
 package kz.bejiihiu.dimensions.paper;
 
+import kz.bejiihiu.dimensions.admin.AdminSurface;
 import kz.bejiihiu.dimensions.common.config.ConfigurationService;
 import kz.bejiihiu.dimensions.common.config.EnvLookup;
 import kz.bejiihiu.dimensions.common.config.Environment;
@@ -142,6 +143,10 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
             logger.error("SEVERE: the End/transfer wave failed to install — portal transfers are refused. Cause: {}",
                     SecretsRedactor.redact(e.getMessage()), e);
         }
+
+        // --- stage 8: admin surface (/dd) --------------------------------------
+        // Registered last so the admin can inspect an otherwise-degraded backend.
+        AdminSurface.install(this, services, configService, mirageService, syncServices);
 
         if (!services.isHealthy()) {
             logger.error("SEVERE: backend is DEGRADED — {}. Later waves must refuse transfers.",

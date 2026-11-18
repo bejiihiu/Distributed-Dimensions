@@ -19,4 +19,15 @@ dependencies:
       required: false
       join-classpath: true
 
+# Permissions declared for the paper (modern) descriptor dialect. The
+# paper-plugin.yml format flattens these two keys at the root (verified
+# against Paper's PaperPluginMeta: 'defaultPerm' + 'permissions' map).
+# plugin.yml is never read when paper-plugin.yml is present, so this is
+# the only place an op-default admin node may live.
+defaultPerm: op
+permissions:
+  distributeddimensions.admin:
+    description: "Administrative access to the /dd command tree (info, reload, mirage)"
+    default: op
+
 authors: [ bejiihiu.xs ]
