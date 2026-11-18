@@ -41,7 +41,8 @@ final class TestConfigs {
                         new DimensionsSettings(
                                 new DimensionTarget("overworld", "minecraft:overworld"),
                                 new DimensionTarget("nether", "minecraft:the_nether"),
-                                new DimensionTarget("end", "minecraft:the_end"))),
+                                new DimensionTarget("end", "minecraft:the_end")),
+                        "test-backend"),
                 new PortalsSettings(
                         new NetherPortalsSettings(true, true, true, true, true),
                         new EndPortalsSettings(true),
