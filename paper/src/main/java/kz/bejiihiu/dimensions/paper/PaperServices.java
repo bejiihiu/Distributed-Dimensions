@@ -2,6 +2,7 @@ package kz.bejiihiu.dimensions.paper;
 
 import kz.bejiihiu.dimensions.common.config.PluginConfig;
 import kz.bejiihiu.dimensions.common.persistence.DimensionPersistence;
+import kz.bejiihiu.dimensions.common.persistence.EntityPayloadStore;
 import kz.bejiihiu.dimensions.common.persistence.PortalIndex;
 import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
 import kz.bejiihiu.dimensions.common.persistence.TransferOperationJournal;
@@ -142,6 +143,11 @@ public final class PaperServices implements AutoCloseable {
     /** Respawn-point store. Same fail-closed contract as {@link #persistence()}. */
     public RespawnPointStore respawnPoints() {
         return persistence().respawnPoints();
+    }
+
+    /** Entity-transfer payload store. Same fail-closed contract as {@link #persistence()}. */
+    public EntityPayloadStore entityPayloads() {
+        return persistence().entityPayloads();
     }
 
     // ------------------------------------------------------------------ services

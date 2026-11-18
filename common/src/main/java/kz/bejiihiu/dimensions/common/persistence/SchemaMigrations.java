@@ -30,6 +30,9 @@ public final class SchemaMigrations {
         String dimensionIndex = TableNames.index(normalizedPrefix, "portal_index_dimension_origin");
         String respawnPoints = TableNames.table(normalizedPrefix, "respawn_points");
         String respawnUpdatedIndex = TableNames.index(normalizedPrefix, "respawn_points_updated_at");
+        String payloads = TableNames.table(normalizedPrefix, "entity_transfer_payloads");
+        String payloadStateTargetIndex = TableNames.index(normalizedPrefix, "entity_payloads_state_target");
+        String payloadStateIndex = TableNames.index(normalizedPrefix, "entity_payloads_state_created");
 
         return List.of(
                 new Migration(1, "initial schema (transfer journal, portal index)",
@@ -91,6 +94,25 @@ public final class SchemaMigrations {
                                     updated_at    BIGINT          NOT NULL
                                 )""".formatted(respawnPoints),
                                 "CREATE INDEX " + respawnUpdatedIndex + " ON " + respawnPoints + " (updated_at)"
+                        )),
+                new Migration(3, "entity transfer payloads table",
+                        List.of(
+                                """
+                                CREATE TABLE IF NOT EXISTS %s (
+                                    op_id             VARCHAR(36)  NOT NULL,
+                                    seq               INT          NOT NULL,
+                                    kind              VARCHAR(32)  NOT NULL,
+                                    target_server     VARCHAR(64)  NOT NULL,
+                                    target_dimension  VARCHAR(128) NOT NULL,
+                                    player_uuid       VARCHAR(36),
+                                    payload_json      TEXT         NOT NULL,
+                                    state             VARCHAR(16)  NOT NULL,
+                                    created_at        BIGINT       NOT NULL,
+                                    updated_at        BIGINT       NOT NULL,
+                                    PRIMARY KEY (op_id, seq)
+                                )""".formatted(payloads),
+                                "CREATE INDEX " + payloadStateTargetIndex + " ON " + payloads + " (state, target_server, created_at)",
+                                "CREATE INDEX " + payloadStateIndex + " ON " + payloads + " (state, created_at)"
                         )));
     }
 }

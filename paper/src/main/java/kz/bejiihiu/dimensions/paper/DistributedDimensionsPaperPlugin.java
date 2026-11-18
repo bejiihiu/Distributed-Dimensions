@@ -48,6 +48,7 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
     private PaperServices services;
     private SyncServices syncServices;
     private ApiBridge apiBridge;
+    private kz.bejiihiu.dimensions.entities.EntityTransferModule entityTransferModule;
 
     @Override
     public void onEnable() {
@@ -145,8 +146,19 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
         }
 
         // --- stage 8: admin surface (/dd) --------------------------------------
-        // Registered last so the admin can inspect an otherwise-degraded backend.
+        // Registered late so the admin can inspect an otherwise-degraded backend.
         AdminSurface.install(this, services, configService, mirageService, syncServices);
+
+        // --- stage 9: entity transfers -----------------------------------------
+        // Failures inside install() must not take the backend down — the flow degrades to
+        // "entities stay put" instead of breaking the whole plugin.
+        try {
+            this.entityTransferModule = kz.bejiihiu.dimensions.entities.EntityTransferModule.install(
+                    this, services, mirageService::isMirage);
+        } catch (RuntimeException e) {
+            logger.error("SEVERE: the entity transfer wave failed to install — entities do not cross servers. Cause: {}",
+                    SecretsRedactor.redact(e.getMessage()), e);
+        }
 
         if (!services.isHealthy()) {
             logger.error("SEVERE: backend is DEGRADED — {}. Later waves must refuse transfers.",
@@ -165,6 +177,12 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
         apiBridge = null;
         if (bridge != null) {
             bridge.unregister();
+        }
+        // stop the entity poll/sweep/watchdog loops first — they touch persistence on threads
+        kz.bejiihiu.dimensions.entities.EntityTransferModule entityModule = entityTransferModule;
+        entityTransferModule = null;
+        if (entityModule != null) {
+            entityModule.shutdown();
         }
         PaperServices current = services;
         services = null;
