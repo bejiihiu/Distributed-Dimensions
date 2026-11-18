@@ -24,3 +24,7 @@ notes/
 
 # smoke/dev networks
 run-*/
+
+# local agent tooling
+.codex/
+CLAUDE.md
