@@ -1,6 +1,7 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
+    `java-test-fixtures`
     alias(libs.plugins.shadow)
     alias(libs.plugins.run.paper)
 }
@@ -15,6 +16,18 @@ dependencies {
     compileOnly(libs.paper.api)
     // Cloud для paper бандлится: платформы его не предоставляют.
     implementation(libs.cloud.paper)
+
+    // Фикстуры (FakeSchedulers, fake gateway, мировые прокси) публикуются через
+    // testFixtures, чтобы поздние волны могли гонять логику порталов/сущностей
+    // без поднятого сервера. Фикстуры тоже компилируются против paper-api.
+    testFixturesImplementation(libs.paper.api)
+
+    testImplementation(testFixtures(project(":paper")))
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.launcher)
+    // Тесты трогают bukkit-интерфейсы (World, прокси) — нужен paper-api на classpath.
+    testImplementation(libs.paper.api)
 }
 
 tasks {
