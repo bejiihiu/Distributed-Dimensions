@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>proxy-instance-template</name>
-	<comment>Project proxy-instance-template created by Buildship.</comment>
+	<name>distributed-dimensions</name>
+	<comment>Project distributed-dimensions created by Buildship.</comment>
 	<projects>
 	</projects>
 	<buildSpec>

@@ -40,21 +40,21 @@ tasks {
 
     named<ShadowJar>("shadowJar") {
         archiveClassifier.set("")
-        archiveBaseName.set("multiloader-template-paper")
+        archiveBaseName.set("distributed-dimensions-paper")
         // Склеиваем META-INF/services всех либ (Configurate, Cloud), иначе SPI провайдеры потеряются.
         mergeServiceFiles()
         // Без этого Shadow 9.x режет дубликаты service-файлов до того как их увидит
         // трансформер (ворнинг при сборке) — провайдеры Configurate/Cloud теряются.
-        // Приём у milkdrinkers (фикс service file merging): дубликаты пропускаем
-        // внутрь, склейкой занимается сам трансформер.
+        // Фикс service file merging: дубликаты пропускаем внутрь, склейкой
+        // занимается сам трансформер.
         filesMatching("META-INF/services/**") {
             duplicatesStrategy = DuplicatesStrategy.INCLUDE
         }
         // Всё своё тащим под своим пакетом, чтобы не конфликтовать с другими плагинами.
-        relocate("org.spongepowered.configurate", "kz.bejiihiu.template.libs.configurate")
-        relocate("org.yaml.snakeyaml", "kz.bejiihiu.template.libs.snakeyaml")
-        relocate("io.leangen.geantyref", "kz.bejiihiu.template.libs.geantyref")
-        relocate("org.incendo.cloud", "kz.bejiihiu.template.libs.cloud")
+        relocate("org.spongepowered.configurate", "kz.bejiihiu.dimensions.libs.configurate")
+        relocate("org.yaml.snakeyaml", "kz.bejiihiu.dimensions.libs.snakeyaml")
+        relocate("io.leangen.geantyref", "kz.bejiihiu.dimensions.libs.geantyref")
+        relocate("org.incendo.cloud", "kz.bejiihiu.dimensions.libs.cloud")
         dependencies {
             // Даёт сервер: Adventure, slf4j и аннотации в jar не кладём.
             exclude(dependency("net.kyori:.*:.*"))

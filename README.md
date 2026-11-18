@@ -1,74 +1,36 @@
-# multiloader-template
+# Distributed Dimensions
 
-Paper + Velocity plugin from a single codebase. Shared logic lives in `common`,
-platform modules are thin adapters. Built with Gradle (Kotlin DSL), Java 25,
-Adventure 5 MiniMessage, Configurate and Incendo Cloud v2.
+Paper/Folia + Velocity plugin that distributes the three Minecraft dimensions
+across independent backend servers. Three independent Paper/Folia backends —
+Overworld, Nether, The End — sit behind a single Velocity proxy and behave like
+one Minecraft world. Portals and End mechanics stay vanilla; player data
+(inventory, XP, health, effects, ...) is synced by a separate external sync
+plugin, not by this project.
 
-## Modules
+## Status
 
-| Module     | Contents |
-|------------|----------|
-| `api`      | Public SPI for other plugins (`TemplateApi`, `Templates` holder). No platform deps. |
-| `common`   | Core: config, messages, commands, example feature, unit tests. No Bukkit/Velocity imports. |
-| `paper`    | `JavaPlugin` + `PluginBootstrap` + `PluginLoader`, `paper-plugin.yml`, `runServer`. |
-| `velocity` | `@Plugin` entrypoint, `BuildConstants` version injection, `runVelocity`. |
-
-One command tree (`/template ping|version|reload`) is defined once in
-`common/.../command/TemplateCommands` and registered on both platforms.
+Under heavy development, not released yet. The skeleton compiles and loads
+both platform jars, but no features are implemented. Expect breakage.
 
 ## Requirements
 
-- JDK 25 to build (Gradle downloads the toolchain automatically if missing).
-- Paper 26.3+ for the paper jar, Velocity 4.2+ for the velocity jar.
+- Java 25 to build (Gradle downloads the toolchain automatically if missing)
+- Paper 26.3+ (Folia supported) for the backend jar
+- Velocity 4.2+ for the proxy jar
 
-## Build & run
+## Build
 
 ```bash
-./gradlew build              # tests + both shaded jars
-./gradlew :paper:runServer   # Paper dev server on :25565, debugger on :5005
-./gradlew :velocity:runVelocity
+./gradlew build
 ```
 
-Artifacts: `paper/build/libs/multiloader-template-paper-<version>.jar`,
-`velocity/build/libs/multiloader-template-velocity-<version>.jar`.
+Artifacts: `paper/build/libs/distributed-dimensions-paper-<version>.jar`,
+`velocity/build/libs/distributed-dimensions-velocity-<version>.jar`.
 
-## Commands & permissions
+## License
 
-| Command            | Permission               |
-|--------------------|--------------------------|
-| `/template ping`   | `template.command.ping`  |
-| `/template version`| `template.command.version` |
-| `/template reload` | `template.command.reload` |
-
-Commands are registered by Cloud itself — do not list them in `paper-plugin.yml`.
-
-## Configuration
-
-`config.yml` is created from bundled defaults on first start. Missing keys heal
-themselves on reload; a broken file keeps the last good config and logs a warning.
-The schema is versioned (`config-version` key): old files migrate automatically
-on load, new migrations go into `ConfigMigrations`.
-
-## Make it yours
-
-1. `settings.gradle.kts` — `rootProject.name`.
-2. `gradle.properties` — `group`, `version`, `description`.
-3. Package `kz.bejiihiu.template` → your own (rename dirs + `main`/`bootstrapper`/`loader` in `paper-plugin.yml`, `@Plugin(id)` in velocity).
-4. `paper-plugin.yml` / `@Plugin` — `authors`, `website`, `name`.
-5. `.github/CODEOWNERS`, `.github/FUNDING.yml` — your username.
-6. `LICENSE` — copyright holder.
-
-## Conventions
-
-- Conventional Commits, SemVer (`X.Y.Z` tags → GitHub releases via CI).
-- Shared code in `common` is covered by JUnit 5 tests at public seams.
-- User input reaches MiniMessage only via `Placeholder.unparsed/parsed` — never by concatenation.
-- `api` exposes `TemplateApi`; platform modules register the core on enable and unregister on disable.
+MIT — see [LICENSE](LICENSE).
 
 ## Credits
 
-Structure inspired by [milkdrinkers/Minecraft-Plugin-Template](https://github.com/milkdrinkers/Minecraft-Plugin-Template).
-Libraries: [Adventure](https://docs.advntr.dev/), [Configurate](https://github.com/SpongePowered/Configurate),
-[Cloud](https://cloud.incendo.org/), [run-task](https://github.com/jpenilla/run-task).
-
-MIT — see `LICENSE`.
+Structure inspired by [bejiihiu/multiloader-template](https://github.com/bejiihiu/multiloader-template).

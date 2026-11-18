@@ -29,21 +29,21 @@ tasks {
 
     named<ShadowJar>("shadowJar") {
         archiveClassifier.set("")
-        archiveBaseName.set("multiloader-template-velocity")
+        archiveBaseName.set("distributed-dimensions-velocity")
         // Склеиваем META-INF/services всех либ (Configurate, Cloud), иначе SPI провайдеры потеряются.
         mergeServiceFiles()
         // Без этого Shadow 9.x режет дубликаты service-файлов до того как их увидит
         // трансформер (ворнинг при сборке) — провайдеры Configurate/Cloud теряются.
-        // Приём у milkdrinkers (фикс service file merging): дубликаты пропускаем
-        // внутрь, склейкой занимается сам трансформер.
+        // Фикс service file merging: дубликаты пропускаем внутрь, склейкой
+        // занимается сам трансформер.
         filesMatching("META-INF/services/**") {
             duplicatesStrategy = DuplicatesStrategy.INCLUDE
         }
         // Всё своё тащим под своим пакетом, чтобы не конфликтовать с другими плагинами.
-        relocate("org.spongepowered.configurate", "kz.bejiihiu.template.libs.configurate")
-        relocate("org.yaml.snakeyaml", "kz.bejiihiu.template.libs.snakeyaml")
-        relocate("io.leangen.geantyref", "kz.bejiihiu.template.libs.geantyref")
-        relocate("org.incendo.cloud", "kz.bejiihiu.template.libs.cloud")
+        relocate("org.spongepowered.configurate", "kz.bejiihiu.dimensions.libs.configurate")
+        relocate("org.yaml.snakeyaml", "kz.bejiihiu.dimensions.libs.snakeyaml")
+        relocate("io.leangen.geantyref", "kz.bejiihiu.dimensions.libs.geantyref")
+        relocate("org.incendo.cloud", "kz.bejiihiu.dimensions.libs.cloud")
         dependencies {
             // Даёт прокси (Velocity 4 везёт Adventure 5): Adventure, slf4j и аннотации в jar не кладём.
             exclude(dependency("net.kyori:.*:.*"))
@@ -54,19 +54,18 @@ tasks {
 }
 
 // Версия проксируется в BuildConstants до компиляции, чтобы @Plugin видел константу.
-// Механика один в один как в одиночном velocity-шаблоне, путь только под новый пакет.
-val templateSource = file("src/main/templates")
-val templateDest = layout.buildDirectory.dir("generated/sources/templates")
-val generateTemplates = tasks.register<Copy>("generateTemplates") {
-    // Комменты в шаблоне только ASCII: expand() читает файл в кодировке платформы,
+val versionedSource = file("src/main/versioned")
+val versionedDest = layout.buildDirectory.dir("generated/sources/versioned")
+val generateVersionedSources = tasks.register<Copy>("generateVersionedSources") {
+    // Комменты в исходнике только ASCII: expand() читает файл в кодировке платформы,
     // не-ASCII превращается в кракозябры независимо от filteringCharset.
     filteringCharset = "UTF-8"
     val props = mapOf("version" to project.version)
     inputs.properties(props)
 
-    from(templateSource)
-    into(templateDest)
+    from(versionedSource)
+    into(versionedDest)
     expand(props)
 }
 
-sourceSets.main.configure { java.srcDir(generateTemplates.map { it.outputs }) }
+sourceSets.main.configure { java.srcDir(generateVersionedSources.map { it.outputs }) }

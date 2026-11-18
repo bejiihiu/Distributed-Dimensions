@@ -10,14 +10,12 @@ dependencies {
     api(libs.adventure.api)
     api(libs.adventure.minimessage)
 
-    // Cloud-ядро идёт через api: CommandManager сидит в сигнатуре TemplateCommands.register.
+    // Cloud-ядро идёт через api: платформенные менеджеры команд построены на нём.
     // Релокация в shade переписывает и наши ссылки тоже, так что рассинхрона не будет.
     api(libs.cloud.core)
 
     // Configurate бандлится в каждый платформенный jar с релокацией, транзитивно тянет snakeyaml.
     implementation(libs.configurate.yaml)
-    // Plain-сериализатор для strip(): в сигнатурах не торчит, поэтому implementation.
-    implementation(libs.adventure.plain)
 
     compileOnly(libs.slf4j.api)
     compileOnly(libs.annotations)
@@ -26,6 +24,4 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     // Лаунчер нужен Gradle раннеру, сам junit-jupiter его не тянет.
     testRuntimeOnly(libs.junit.launcher)
-    testImplementation(libs.configurate.yaml)
-    testImplementation(libs.slf4j.simple)
 }

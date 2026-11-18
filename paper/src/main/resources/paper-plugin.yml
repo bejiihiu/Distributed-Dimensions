@@ -1,15 +1,12 @@
-name: multiloader-template
-# Описание лежит литералом осознанно: пропускать не-ASCII через expand() нельзя,
-# Gradle читает шаблон в кодировке платформы и кириллица превращается в кракозябры.
-# Версия ниже ASCII-символами, её подставляет сборка.
-description: Paper + Velocity plugin from a single codebase.
+name: Distributed Dimensions
+# Non-ASCII must stay literal here: expand() reads the file in platform
+# encoding and mangles it. Only the ASCII version placeholder goes through it.
+description: Paper/Folia + Velocity plugin that distributes the three Minecraft dimensions across independent backend servers.
 version: '${version}'
 
-main: kz.bejiihiu.template.paper.TemplatePaperPlugin
-bootstrapper: kz.bejiihiu.template.paper.TemplatePaperBootstrap
-loader: kz.bejiihiu.template.paper.TemplatePaperLoader
+main: kz.bejiihiu.dimensions.paper.DistributedDimensionsPaperPlugin
 api-version: '26.3'
 load: POSTWORLD
+folia-supported: true
 
 authors: [ bejiihiu.xs ]
-website: https://devfolia.t.me/
