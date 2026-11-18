@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    # dev собираем тоже: релизы готовятся там, ломать его втихаря нельзя
+    # dev builds too: releases are cut from it, breaking it quietly is not allowed
     branches: [main, master, dev]
   pull_request:
 
@@ -11,16 +11,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # JDK 25 основной: все модули собираются тулчейном 25.
-      # (Foojay-резолвер докачает его и сам, но в CI быстрее ставить нужный сразу.)
+      # JDK 25 is the primary: all modules build with the 25 toolchain.
+      # (The Foojay resolver would fetch it anyway, but installing the right one
+      # up front is faster in CI.)
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 25
+      # setup-gradle@v6 performs wrapper-jar validation on every run,
+      # so no separate wrapper-validation step is needed.
       - uses: gradle/actions/setup-gradle@v6
       - name: Build and test
-        # --parallel явно: модули независимые, пусть собираются рядом.
-        # (В gradle.properties тоже стоит org.gradle.parallel=true, это дубль для ясности.)
+        # --parallel: the modules are independent, let them build side by side.
+        # (gradle.properties also sets org.gradle.parallel=true; this duplicate is for clarity.)
         run: ./gradlew build --parallel --stacktrace
       - name: Upload jars
         uses: actions/upload-artifact@v7
@@ -29,4 +32,5 @@ jobs:
           path: |
             paper/build/libs/*.jar
             velocity/build/libs/*.jar
+            api/build/libs/*.jar
           if-no-files-found: error

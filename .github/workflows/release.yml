@@ -1,17 +1,19 @@
 name: release
 
-# Релиз по тегу vX.Y.Z. Версию в gradle.properties подними заранее,
-# тег обязан совпадать: v1.2.3 при version=1.2.3.
+# Release on vX.Y.Z tags only. Bump the version in gradle.properties before tagging;
+# the tag must match: v1.2.3 when version=1.2.3 (checked below).
+# Cutting a release is one command: git tag v1.2.3 && git push origin v1.2.3
 on:
   push:
-    tags: ["v*"]
-
-permissions:
-  contents: write
+    tags: ["v*.*.*"]
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      # job-level minimal: the token only needs to cut the release and publish the api package
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -19,12 +21,42 @@ jobs:
           distribution: temurin
           java-version: 25
       - uses: gradle/actions/setup-gradle@v6
-      - name: Build
+      - name: Verify tag matches project version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(grep -E '^version=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')"
+          if [ "$tag" != "$version" ]; then
+            echo "tag '${GITHUB_REF_NAME}' does not match gradle.properties version '${version}'" >&2
+            echo "bump version first, then tag" >&2
+            exit 1
+          fi
+      - name: Build and test
         run: ./gradlew build --parallel --stacktrace
-      - name: Release
+      - name: Compute checksums
+        run: |
+          set -euo pipefail
+          {
+            (cd paper/build/libs && sha256sum distributed-dimensions-paper-*.jar)
+            (cd velocity/build/libs && sha256sum distributed-dimensions-velocity-*.jar)
+            (cd api/build/libs && sha256sum distributed-dimensions-api-*.jar)
+          } > checksums.txt
+          cat checksums.txt
+      - name: Publish api to GitHub Packages
+        # publishing block in api/build.gradle.kts reads GITHUB_ACTOR/GITHUB_TOKEN from env
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./gradlew :api:publishMavenPublicationToGitHubPackagesRepository
+      - name: Create GitHub release
+        # softprops/action-gh-release@v3: one step for file upload + notes via the GitHub API,
+        # handles globs, skips nothing silently (fail_on_unmatched_files). Beats wiring gh CLI calls by hand.
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            paper/build/libs/*.jar
-            velocity/build/libs/*.jar
+            paper/build/libs/distributed-dimensions-paper-*.jar
+            velocity/build/libs/distributed-dimensions-velocity-*.jar
+            api/build/libs/*.jar
+            checksums.txt
           generate_release_notes: true
+          fail_on_unmatched_files: true

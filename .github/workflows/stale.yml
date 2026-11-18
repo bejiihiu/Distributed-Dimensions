@@ -14,5 +14,11 @@ jobs:
         with:
           days-before-stale: 60
           days-before-close: 14
-          stale-issue-message: "Помечено как stale: нет активности 60 дней. Отпишись, если ещё актуально."
-          stale-pr-message: "Помечено как stale: нет активности 60 дней."
+          # default stale label is "Stale" — kept
+          exempt-issue-labels: "maintainers,roadmap"
+          exempt-pr-labels: "maintainers,roadmap"
+          close-issue-reason: not_planned
+          stale-issue-message: "Marked as stale: no activity for 60 days. Comment if this is still relevant."
+          stale-pr-message: "Marked as stale: no activity for 60 days. Comment if this is still relevant."
+          close-issue-message: "Closing as stale: no activity since it was marked stale. Feel free to reopen if this is still relevant."
+          close-pr-message: "Closing as stale: no activity since it was marked stale. Feel free to reopen if this is still relevant."
