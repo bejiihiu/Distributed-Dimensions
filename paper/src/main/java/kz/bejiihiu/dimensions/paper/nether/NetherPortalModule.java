@@ -5,17 +5,22 @@ import kz.bejiihiu.dimensions.paper.end.BedAnchorValidator;
 import kz.bejiihiu.dimensions.paper.end.EndArrivalPlanResolver;
 import kz.bejiihiu.dimensions.paper.end.EndPortalListener;
 import kz.bejiihiu.dimensions.paper.end.RespawnRecorder;
+import kz.bejiihiu.dimensions.mirage.MirageService;
 import kz.bejiihiu.dimensions.paper.transfer.BukkitTransferEventDispatcher;
 import kz.bejiihiu.dimensions.paper.transfer.BukkitWorldLookup;
+import kz.bejiihiu.dimensions.paper.transfer.OwnBackendEnvironment;
 import kz.bejiihiu.dimensions.paper.transfer.PaperTransferBackend;
 import kz.bejiihiu.dimensions.paper.transfer.PluginMessageTransferChannel;
 import kz.bejiihiu.dimensions.paper.transfer.PortalTransferService;
 import kz.bejiihiu.dimensions.paper.transfer.TransferArrivalListener;
 import kz.bejiihiu.dimensions.paper.transfer.TransferArrivalService;
 
+import org.bukkit.World;
+import org.bukkit.World.Environment;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.time.Clock;
+import java.util.function.Predicate;
 
 /**
  * Wires the transfer orchestration plus both portal families into the backend: the End
@@ -54,9 +59,17 @@ public final class NetherPortalModule {
 
         channel.install(transfers);
 
+        // every backend spawns all three dimension stems, so the platform respawn world is
+        // an overworld-typed stray on nether/end backends — resolve the world hosting this
+        // backend's own dimension instead (mirages excluded), falling back per the lookup chain
+        MirageService mirage = MirageService.current().orElse(null);
+        Predicate<World> isMirage = world -> mirage != null && mirage.isMirage(world);
+        Environment ownEnvironment = OwnBackendEnvironment.resolve(services);
+
         plugin.getServer().getPluginManager().registerEvents(new RespawnRecorder(backend), plugin);
         plugin.getServer().getPluginManager().registerEvents(new EndPortalListener(backend, transfers), plugin);
         plugin.getServer().getPluginManager().registerEvents(new NetherPortalListener(backend, transfers), plugin);
-        plugin.getServer().getPluginManager().registerEvents(new TransferArrivalListener(arrivals, new BukkitWorldLookup()), plugin);
+        plugin.getServer().getPluginManager().registerEvents(new TransferArrivalListener(arrivals,
+                new BukkitWorldLookup(() -> ownEnvironment, isMirage)), plugin);
     }
 }

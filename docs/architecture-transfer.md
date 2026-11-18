@@ -146,6 +146,26 @@ operations (`cause=END_PORTAL` and `sourceDimension=minecraft:the_end`):
 Entry-portal operations (source not The End) always use the journal position — the obsidian
 platform for End entry.
 
+### Own-dimension respawn world
+
+The arrival fallbacks above ("stored respawn position unusable → world spawn", and the
+journal-position placement in the backend's default world) resolve *which* world to use
+through `ArrivalWorldLookup#respawnWorld()`, and that resolution is deliberately not the
+platform's `getRespawnWorld()`. Paper 26.3 fresh-boots all three vanilla dimension stems on
+every backend, so a nether or end backend carries a stray overworld-typed level world —
+exactly what the platform respawn world points at — while the world actually hosting this
+backend's resident dimension is the only sane place to drop an arriving player. The lookup
+therefore first selects the loaded world whose `Environment` matches this backend's own
+dimension, resolved at enable time from `network.source-server` against the
+`network.dimensions` slots (overworld → NORMAL, `minecraft:the_nether` → NETHER,
+`minecraft:the_end` → THE_END). Mirage (void stub) worlds are never eligible even though
+their environment matches — they are excluded via the mirage registry, since a teleport into
+a stub is an intercepted trap, not an arrival. Only when the own environment cannot be
+determined (blank/absent/unmatched `network.source-server`) or no resident world exists
+(stem disabled everywhere, mirage-only) does the lookup degrade to the platform respawn
+world — today's behaviour, kept deliberately so a misconfigured backend still boots arrivals
+into a joinable world instead of refusing them.
+
 ### Position validation (the bed/anchor hook)
 
 `PositionValidator` is an optional veto for stored positions, evaluated on the target's
