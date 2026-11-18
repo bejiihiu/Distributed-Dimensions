@@ -133,6 +133,16 @@ public final class DistributedDimensionsPaperPlugin extends JavaPlugin {
         ArrivalEffectsService.registerIfEnabled(this, services);
         this.apiBridge = ApiBridge.registerIfEnabled(this, services, executor);
 
+        // --- stage 7: end portals + shared transfer orchestration -----------------
+        // Failures inside install() must not take the backend down — the flow degrades to
+        // "portals refuse" instead of breaking the whole plugin.
+        try {
+            kz.bejiihiu.dimensions.paper.end.EndModule.install(this, services);
+        } catch (RuntimeException e) {
+            logger.error("SEVERE: the End/transfer wave failed to install — portal transfers are refused. Cause: {}",
+                    SecretsRedactor.redact(e.getMessage()), e);
+        }
+
         if (!services.isHealthy()) {
             logger.error("SEVERE: backend is DEGRADED — {}. Later waves must refuse transfers.",
                     String.join(" | ", services.health().reasons()));

@@ -101,6 +101,30 @@ class MongoPersistenceContractTest {
     }
 
     @Test
+    void respawnPointRoundTripAndUpsert() {
+        UUID player = UUID.randomUUID();
+        kz.bejiihiu.dimensions.common.model.RespawnPointRecord point =
+                new kz.bejiihiu.dimensions.common.model.RespawnPointRecord(
+                        player, DimensionId.NETHER, "world_nether",
+                        new Position(-1.5, 64.0, 2.5, 90.0, -10.0),
+                        kz.bejiihiu.dimensions.common.model.RespawnKind.RESPAWN_ANCHOR, T0);
+        persistence.respawnPoints().upsert(point);
+        assertEquals(Optional.of(point), persistence.respawnPoints().find(player));
+
+        kz.bejiihiu.dimensions.common.model.RespawnPointRecord moved =
+                new kz.bejiihiu.dimensions.common.model.RespawnPointRecord(
+                        player, DimensionId.OVERWORLD, "world",
+                        new Position(100.5, 65.0, 200.5, 0.0, 0.0),
+                        kz.bejiihiu.dimensions.common.model.RespawnKind.BED, T1);
+        persistence.respawnPoints().upsert(moved);
+        assertEquals(Optional.of(moved), persistence.respawnPoints().find(player));
+
+        assertTrue(persistence.respawnPoints().delete(player));
+        assertEquals(Optional.empty(), persistence.respawnPoints().find(player));
+        assertFalse(persistence.respawnPoints().delete(player));
+    }
+
+    @Test
     void duplicateOperationIdIsRejected() {
         TransferOperation op = sampleOperation();
         persistence.journal().recordCreated(op);

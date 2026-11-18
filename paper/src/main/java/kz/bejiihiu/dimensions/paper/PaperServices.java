@@ -3,6 +3,7 @@ package kz.bejiihiu.dimensions.paper;
 import kz.bejiihiu.dimensions.common.config.PluginConfig;
 import kz.bejiihiu.dimensions.common.persistence.DimensionPersistence;
 import kz.bejiihiu.dimensions.common.persistence.PortalIndex;
+import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
 import kz.bejiihiu.dimensions.common.persistence.TransferOperationJournal;
 import kz.bejiihiu.dimensions.paper.chunktickets.ChunkTicketService;
 import kz.bejiihiu.dimensions.paper.scheduler.Schedulers;
@@ -136,6 +137,11 @@ public final class PaperServices implements AutoCloseable {
     /** Portal index. Same fail-closed contract as {@link #persistence()}. */
     public PortalIndex portalIndex() {
         return persistence().portalIndex();
+    }
+
+    /** Respawn-point store. Same fail-closed contract as {@link #persistence()}. */
+    public RespawnPointStore respawnPoints() {
+        return persistence().respawnPoints();
     }
 
     // ------------------------------------------------------------------ services

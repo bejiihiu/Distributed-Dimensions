@@ -58,6 +58,7 @@ public final class PersistenceFactory {
         return new DimensionPersistence(
                 new SqlTransferOperationJournal(dataSource, normalizedPrefix),
                 new SqlPortalIndex(dataSource, normalizedPrefix),
+                new SqlRespawnPointStore(dataSource, normalizedPrefix),
                 dataSource::close);
     }
 
@@ -80,11 +81,15 @@ public final class PersistenceFactory {
             String portals = TableNames.table(normalizedPrefix, "portal_index");
             MongoCollection<Document> opsCollection = database.getCollection(ops);
             MongoCollection<Document> portalsCollection = database.getCollection(portals);
+            String respawn = TableNames.table(normalizedPrefix, "respawn_points");
+            MongoCollection<Document> respawnCollection = database.getCollection(respawn);
             MongoTransferOperationJournal.ensureIndexes(opsCollection);
             MongoPortalIndex.ensureIndexes(portalsCollection);
+            MongoRespawnPointStore.ensureIndexes(respawnCollection);
             return new DimensionPersistence(
                     new MongoTransferOperationJournal(opsCollection),
                     new MongoPortalIndex(portalsCollection),
+                    new MongoRespawnPointStore(respawnCollection),
                     client::close);
         } catch (com.mongodb.MongoException e) {
             client.close();

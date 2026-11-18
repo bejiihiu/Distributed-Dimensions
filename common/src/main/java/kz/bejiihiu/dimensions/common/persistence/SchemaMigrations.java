@@ -28,6 +28,8 @@ public final class SchemaMigrations {
         String playerStateIndex = TableNames.index(normalizedPrefix, "transfer_operations_player_state");
         String updatedIndex = TableNames.index(normalizedPrefix, "transfer_operations_updated_at");
         String dimensionIndex = TableNames.index(normalizedPrefix, "portal_index_dimension_origin");
+        String respawnPoints = TableNames.table(normalizedPrefix, "respawn_points");
+        String respawnUpdatedIndex = TableNames.index(normalizedPrefix, "respawn_points_updated_at");
 
         return List.of(
                 new Migration(1, "initial schema (transfer journal, portal index)",
@@ -72,6 +74,23 @@ public final class SchemaMigrations {
                                     updated_at   BIGINT       NOT NULL
                                 )""".formatted(portals),
                                 "CREATE INDEX " + dimensionIndex + " ON " + portals + " (dimension, origin_x, origin_z)"
+                        )),
+                new Migration(2, "respawn points table",
+                        List.of(
+                                """
+                                CREATE TABLE IF NOT EXISTS %s (
+                                    player_uuid   VARCHAR(36)     PRIMARY KEY,
+                                    dimension     VARCHAR(64)     NOT NULL,
+                                    world         VARCHAR(128)    NOT NULL,
+                                    x             DOUBLE PRECISION NOT NULL,
+                                    y             DOUBLE PRECISION NOT NULL,
+                                    z             DOUBLE PRECISION NOT NULL,
+                                    yaw           DOUBLE PRECISION NOT NULL,
+                                    pitch         DOUBLE PRECISION NOT NULL,
+                                    kind          VARCHAR(16)     NOT NULL,
+                                    updated_at    BIGINT          NOT NULL
+                                )""".formatted(respawnPoints),
+                                "CREATE INDEX " + respawnUpdatedIndex + " ON " + respawnPoints + " (updated_at)"
                         )));
     }
 }

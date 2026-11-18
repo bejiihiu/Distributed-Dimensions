@@ -25,6 +25,11 @@ public final class TestWorlds {
 
     /** A world proxy with a stable UID derived from {@code name}. */
     public static World create(String name) {
+        return create(name, World.Environment.NORMAL);
+    }
+
+    /** A world proxy pinned to a specific environment. */
+    public static World create(String name, org.bukkit.World.Environment environment) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("name must not be blank");
         }
@@ -36,6 +41,10 @@ public final class TestWorlds {
                 case "getName":
                 case "getWorldName":
                     return name;
+                case "getEnvironment":
+                    return environment;
+                case "getSpawnLocation":
+                    return new org.bukkit.Location((World) proxy, 0.0, 64.0, 0.0, 0.0f, 0.0f);
                 case "hashCode":
                     return uid.hashCode();
                 case "equals":
@@ -44,7 +53,7 @@ public final class TestWorlds {
                     return "TestWorld[" + name + "]";
                 default:
                     throw new UnsupportedOperationException(
-                            "TestWorlds proxy refuses " + method.getName() + " — tests must not touch world state");
+                            "TestWorlds proxy refuses " + method.getName() + " - tests must not touch world state");
             }
         };
         return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class<?>[] { World.class }, handler);
