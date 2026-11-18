@@ -17,8 +17,6 @@ dependencies {
     implementation(project(":common"))
     implementation(project(":api"))
     compileOnly(libs.paper.api)
-    // Cloud для paper бандлится: платформы его не предоставляют.
-    implementation(libs.cloud.paper)
     // Public HuskSync API for the compile-time listener; runtime access is
     // linkage-guarded and only used when HuskSync is actually installed.
     compileOnly(libs.husksync.bukkit)
@@ -60,7 +58,7 @@ tasks {
     named<ShadowJar>("shadowJar") {
         archiveClassifier.set("")
         archiveBaseName.set("distributed-dimensions-paper")
-        // Склеиваем META-INF/services всех либ (Configurate, Cloud), иначе SPI провайдеры потеряются.
+        // Склеиваем META-INF/services всех либ (Configurate), иначе SPI провайдеры потеряются.
         mergeServiceFiles()
         // Без этого Shadow 9.x режет дубликаты service-файлов до того как их увидит
         // трансформер (ворнинг при сборке) — провайдеры Configurate/Cloud теряются.
