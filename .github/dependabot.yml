@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      gradle-wrapper:
+        patterns: ["gradle-wrapper"]
+    # Мажоры либ больше не игнорим: рантаймы платформ (Paper 26.x, Velocity 4.x)
+    # сами едут на свежих мажорах, отставать от них дороже чем обновляться.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

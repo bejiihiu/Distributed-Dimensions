@@ -1,0 +1,15 @@
+name: multiloader-template
+# Описание лежит литералом осознанно: пропускать не-ASCII через expand() нельзя,
+# Gradle читает шаблон в кодировке платформы и кириллица превращается в кракозябры.
+# Версия ниже ASCII-символами, её подставляет сборка.
+description: Paper + Velocity plugin from a single codebase.
+version: '${version}'
+
+main: kz.bejiihiu.template.paper.TemplatePaperPlugin
+bootstrapper: kz.bejiihiu.template.paper.TemplatePaperBootstrap
+loader: kz.bejiihiu.template.paper.TemplatePaperLoader
+api-version: '26.3'
+load: POSTWORLD
+
+authors: [ bejiihiu.xs ]
+website: https://devfolia.t.me/

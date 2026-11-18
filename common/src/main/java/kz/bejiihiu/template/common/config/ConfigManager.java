@@ -1,0 +1,112 @@
+package kz.bejiihiu.template.common.config;
+
+import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.spongepowered.configurate.ConfigurateException;
+import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+/**
+ * Загрузка и перезагрузка config.yml.
+ *
+ * <p>Правила простые и жёсткие:</p>
+ * <ul>
+ *   <li>файла нет — копируем дефолт из ресурсов jar, ничего не выдумываем;</li>
+ *   <li>файл битый — остаёмся на прошлом конфиге, в лог пишем причину, плагин продолжает работать;</li>
+ *   <li>в файле не хватает новых ключей — дописываем их значениями по умолчанию.</li>
+ * </ul>
+ * <p>Плагин никогда не падает из-за конфига. Худшее что случится — warn в логе.</p>
+ */
+public final class ConfigManager {
+
+    private final Path file;
+    private final Logger logger;
+    private final YamlConfigurationLoader loader;
+
+    private volatile PluginConfig config = PluginConfig.defaults();
+
+    // ReentrantLock вместо synchronized на методе: reload делает блокирующий
+    // файловый IO, а дёрнуть его могут и с виртуальных нитей (хендлеры команд
+    // Cloud выполняются не на loop-нити) — Lock carrier-нити не паркует.
+    private final ReentrantLock lock = new ReentrantLock();
+
+    public ConfigManager(@NotNull Path dataDirectory, @NotNull Logger logger) {
+        Objects.requireNonNull(dataDirectory, "dataDirectory");
+        this.logger = Objects.requireNonNull(logger, "logger");
+        this.file = dataDirectory.resolve("config.yml");
+        this.loader = YamlConfigurationLoader.builder().path(file).build();
+    }
+
+    /** Актуальный конфиг. Волатильное поле: reload может прийти с другой нити. */
+    public @NotNull PluginConfig current() {
+        return config;
+    }
+
+    /**
+     * Перечитывает файл. Потокобезопасно: два параллельных /template reload
+     * просто выполнятся друг за другом, конфиг не побьётся.
+     *
+     * @return true если перечитали без ошибок
+     */
+    public boolean reload() {
+        lock.lock();
+        try {
+            Files.createDirectories(file.getParent());
+            if (Files.notExists(file)) {
+                copyDefault();
+            }
+            var node = loader.load();
+            // Сначала миграции по версии схемы (файлы эпохи до версий считаются v0),
+            // потом чтение поключево с дефолтами. Порядок важен: миграция может
+            // переименовать ключи, а хилер ниже допишет только то, чего не хватает.
+            ConfigMigrations.migrations().apply(node);
+            // Читаем поключево с дефолтами, а не маппим весь объект разом: так отсутствующие
+            // ключи (включая вложенные) подхватывают значения по умолчанию вместо null,
+            // а неизвестные ключи пользователя остаются в файле нетронутыми.
+            var def = PluginConfig.defaults();
+            var welcomeNode = node.node("welcome");
+            var welcomeDef = def.welcome();
+            var loaded = new PluginConfig(
+                    node.node("prefix").getString(def.prefix()),
+                    node.node("debug").getBoolean(def.debug()),
+                    new PluginConfig.Welcome(
+                            welcomeNode.node("enabled").getBoolean(welcomeDef.enabled()),
+                            welcomeNode.node("message").getString(welcomeDef.message())));
+            // Самовосстановление: дописываем то, чего в файле не было.
+            node.node("prefix").set(String.class, loaded.prefix());
+            node.node("debug").set(Boolean.class, loaded.debug());
+            welcomeNode.node("enabled").set(Boolean.class, loaded.welcome().enabled());
+            welcomeNode.node("message").set(String.class, loaded.welcome().message());
+            loader.save(node);
+            config = loaded;
+            return true;
+        } catch (IOException e) {
+            // ConfigurateException наследник IOException, один catch покрывает и битый YAML, и ошибки диска.
+            logger.warn("Не вышло перечитать config.yml ({}), остаёмся на предыдущем конфиге", file, e);
+            return false;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void copyDefault() throws IOException {
+        try (InputStream in = ConfigManager.class.getResourceAsStream("/config.yml")) {
+            if (in == null) {
+                // Дефолта в ресурсах нет (сборка кривая) — создаём файл из defaults() через лоадер.
+                var node = loader.createNode();
+                node.set(PluginConfig.class, PluginConfig.defaults());
+                loader.save(node);
+                return;
+            }
+            Files.copy(in, file);
+        } catch (ConfigurateException e) {
+            throw new IOException("Не вышло записать дефолтный конфиг", e);
+        }
+    }
+}
