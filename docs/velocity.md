@@ -32,10 +32,63 @@ business.
    never half-opens. `/ddproxy reload` re-reads the file; a clean load re-enables routing
    automatically. A broken reload keeps the last-good configuration (or, if nothing was
    ever loaded, the bundled defaults) - see "Configuration" in docs/configuration.md.
+   Even a **total** load failure - where even the bundled defaults fail to load, e.g. the
+   default `database.password: ${DB_PASSWORD}` with no `DB_PASSWORD` in the service
+   environment - only degrades the plugin; it is never propagated out of the boot sequence.
+   See "Boot failure and DEGRADED mode" below.
 4. The plugin-message listener, the disconnect listener, and the `/ddproxy` admin command
-   are registered.
+   are registered unconditionally, before the configuration outcome is reported.
 
 Nothing but field injection happens in the plugin constructor.
+
+## Boot failure and DEGRADED mode
+
+`ConfigurationService.load()` throws when no configuration can be produced at all - neither
+the file nor the bundled-defaults fallback. The bundled defaults carry
+`database.password: ${DB_PASSWORD}`, so on a stock Velocity host with no `DB_PASSWORD`
+set, the very first boot of this plugin hits exactly that: the file is created from the
+bundled defaults, the `${DB_PASSWORD}` expansion fails, the fallback fails the same way,
+and `load()` throws.
+
+The plugin catches that (and any other `RuntimeException` from `load()`) and boots in
+**DEGRADED (diagnostic) mode** instead of dying inside the `ProxyInitializeEvent`:
+
+- the `distributeddimensions:transfer` channel **is** registered;
+- the plugin-message and disconnect listeners **are** registered;
+- `/ddproxy` **is** registered and fully functional;
+- every `dimension_transfer_request` is refused with an explicit
+  `dimension_transfer_result{ok:false, error:"unavailable"}` whose `message` names the
+  cause - the (sanitized, single-line) `ConfigurationException` message - and no
+  connection attempt or player lookup is ever issued;
+- one SEVERE (ERROR-level) line is written at boot with the actionable fix;
+- `/ddproxy status` prints the degraded reason;
+- `/ddproxy reload` after fixing the environment or `config.yml` **fully recovers**:
+  a clean load re-enables routing live, no restart. If the reload is still broken, the
+  command reports the failure (naming the cause) and the plugin stays degraded - the
+  exception is never thrown out of the command.
+
+Example of the one SEVERE boot line (wrapped and with the duplicated fallback part elided;
+the em dashes are part of the configuration service's message):
+
+```
+[distributeddimensions] *** DEGRADED MODE *** configuration failed to load: database.password references environment variable 'DB_PASSWORD' which is not set or is blank — set it in the service environment before starting, or replace ${DB_PASSWORD} with a literal value (empty string = no credentials) (bundled-defaults fallback also failed: ...) — set DB_PASSWORD (or set database.password to "" for no credentials) — the proxy enables in diagnostic mode until then. Every transfer is refused with UNAVAILABLE; run '/ddproxy status' for the full reason and '/ddproxy reload' after fixing the environment or config.yml
+```
+
+Example of the `/ddproxy status` output in DEGRADED mode (the wrapped middle line is one
+console line, elided with `...`; the rest is verbatim):
+
+```
+config: BROKEN - database.password references environment variable 'DB_PASSWORD' which is not set or is blank — set it in the service environment before starting, or replace ${DB_PASSWORD} with a literal value (empty string = no credentials) (bundled-defaults fallback also failed: ...)
+  transfers are DISABLED until '/ddproxy reload' reports a clean load
+channel: distributeddimensions:transfer (registered)
+dimensions: unavailable (configuration is broken)
+```
+
+The exact text after `BROKEN - ` is the failure from the configuration service (never the
+secret value itself, only the variable name and the remediation). The wire message back to
+backends carries the same cause in the shape
+`proxy configuration is broken: <cause>; transfers are disabled until '/ddproxy reload' reports a clean load`,
+single-line, length-capped at 240 characters for the cause part.
 
 ## The `distributeddimensions:transfer` channel
 
@@ -217,7 +270,7 @@ for it and marks every in-flight operation of that player abandoned:
 | Player disconnects mid-connect | disconnected | (nothing - no carrier); replay sees `DISCONNECTED` | treat as failed; the backend's own player-state handles it |
 | Identical request while in-flight | unchanged | nothing (swallowed) | wait for the result; never mint a second request for the same operation |
 | Replay within 10 min | n/a | cached outcome re-sent | free |
-| Proxy enabled but config broken | n/a | `UNAVAILABLE` naming the config problem | fix config, `/ddproxy reload` |
+| Proxy enabled but config broken (or config unloadable at boot) | n/a | `UNAVAILABLE` naming the config problem | fix config or environment (e.g. set `DB_PASSWORD`), `/ddproxy reload` - routing re-enables live |
 | Proxy restarts mid-operation | undefined | nothing | backends reconcile via shared DB; avoid proxy restarts during transfers |
 | Target configured but not registered in proxy | on source | `BACKEND_DOWN` | fix `velocity.toml` server registration |
 | Entity transfer requested | n/a | `entity_transfer_ack{failed, rejected}` | this build does not route entities |
@@ -236,14 +289,17 @@ Native command, no external command framework. Permission: `distributeddimension
 ```
 
 `status` reports: configuration health (or the exact load error and the degraded mode it
-implies), whether the `distributeddimensions:transfer` channel is registered, the resolved
-`network.dimensions` table, how many transfers are in flight and how many completed
-outcomes are cached (with capacities and TTL), and all transfer counters
+implies - on a stock host with no `DB_PASSWORD` set, the boot is DEGRADED and this is where
+the reason shows up), whether the `distributeddimensions:transfer` channel is registered,
+the resolved `network.dimensions` table, how many transfers are in flight and how many
+completed outcomes are cached (with capacities and TTL), and all transfer counters
 (`requests-received`, `validation-failures`, `in-flight-replays`, ...).
 
-`reload` re-reads `config.yml`. A broken file keeps the last-good configuration - the
-command says so and lists the load report notes; routing stays disabled only if nothing
-was ever loaded successfully. A clean load re-enables routing with no restart.
+`reload` re-reads `config.yml` and re-expands `${VAR}` references. A broken file keeps the
+last-good configuration - the command says so and lists the load report notes; routing stays
+disabled only if nothing was ever loaded successfully. When no fallback exists at all (an
+unloadable configuration at boot), the command reports the failure instead of throwing and
+routing stays disabled. A clean load re-enables routing with no restart.
 
 `transfers` prints the recent-operations ring: timestamp, request-id prefix, player,
 source → target, outcome kind (`SUCCESS` / `FAILED` / `ABANDONED`), error code, duration.

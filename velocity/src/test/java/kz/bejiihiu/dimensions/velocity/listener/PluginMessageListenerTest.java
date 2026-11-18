@@ -54,7 +54,7 @@ class PluginMessageListenerTest {
         platform = new FakeTransferPlatform();
         operations = new TransferOperations(new AdjustableClock(Instant.parse("2026-11-18T12:00:00Z")));
         TransferCoordinator coordinator = new TransferCoordinator(platform, operations,
-                () -> true, () -> DIMENSIONS, () -> Duration.ofSeconds(5), LOGGER, CHANNEL);
+                () -> true, () -> DIMENSIONS, () -> Duration.ofSeconds(5), () -> null, LOGGER, CHANNEL);
         listener = new PluginMessageListener(CHANNEL, coordinator, platform, operations.stats(), LOGGER);
     }
 

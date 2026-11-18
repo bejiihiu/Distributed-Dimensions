@@ -10,6 +10,7 @@ import kz.bejiihiu.dimensions.common.protocol.DimensionTransferRequestMessage;
 import kz.bejiihiu.dimensions.common.protocol.DimensionTransferResultMessage;
 import kz.bejiihiu.dimensions.common.protocol.ProtocolCodec;
 import kz.bejiihiu.dimensions.common.protocol.ProtocolEncodeException;
+import kz.bejiihiu.dimensions.velocity.DegradedReasons;
 import org.slf4j.Logger;
 
 import java.time.Duration;
@@ -33,6 +34,10 @@ import java.util.function.Supplier;
  * asynchronous and the completion handler never blocks. The proxy keeps everything in
  * memory - after a proxy restart, operations the backends still consider in-flight are
  * reconciled by the backends against their own (durable) state, not here.
+ *
+ * <p>When the proxy is in degraded (fail-closed) mode, the {@code degradedReasonSupplier}
+ * is consulted for the cause of the broken state; its output is sanitized before it reaches
+ * logs or the wire. The supplier may return null when no cause is known.
  */
 public final class TransferCoordinator {
 
@@ -42,6 +47,7 @@ public final class TransferCoordinator {
     private final BooleanSupplier routingHealthy;
     private final Supplier<DimensionsSettings> dimensionsSupplier;
     private final Supplier<Duration> timeoutSupplier;
+    private final Supplier<String> degradedReasonSupplier;
     private final Logger logger;
     private final ChannelIdentifier channel;
 
@@ -50,6 +56,7 @@ public final class TransferCoordinator {
                                BooleanSupplier routingHealthy,
                                Supplier<DimensionsSettings> dimensionsSupplier,
                                Supplier<Duration> timeoutSupplier,
+                               Supplier<String> degradedReasonSupplier,
                                Logger logger,
                                ChannelIdentifier channel) {
         this.platform = platform;
@@ -58,6 +65,7 @@ public final class TransferCoordinator {
         this.routingHealthy = routingHealthy;
         this.dimensionsSupplier = dimensionsSupplier;
         this.timeoutSupplier = timeoutSupplier;
+        this.degradedReasonSupplier = degradedReasonSupplier;
         this.logger = logger;
         this.channel = channel;
     }
@@ -70,10 +78,20 @@ public final class TransferCoordinator {
             // 0. fail-closed: never route on a broken configuration half-loaded
             if (!isRoutingHealthy()) {
                 operations.stats().refusedBrokenConfig.incrementAndGet();
-                logger.error("refusing transfer {} from server '{}': proxy configuration is broken, "
-                        + "transfers are disabled until the configuration loads cleanly", rid, message.sourceServer());
-                sendResult(source, message.requestId(), TransferOutcome.failed(TransferError.UNAVAILABLE,
-                        "proxy configuration is broken; transfers are disabled"));
+                String reason = degradedReason();
+                String resultMessage = reason == null
+                        ? "proxy configuration is broken; transfers are disabled"
+                        : "proxy configuration is broken: " + reason
+                                + "; transfers are disabled until '/ddproxy reload' reports a clean load";
+                if (reason != null) {
+                    logger.error("refusing transfer {} from server '{}': proxy configuration is broken: {} - "
+                            + "transfers are disabled until '/ddproxy reload' reports a clean load",
+                            rid, message.sourceServer(), reason);
+                } else {
+                    logger.error("refusing transfer {} from server '{}': proxy configuration is broken, "
+                            + "transfers are disabled until the configuration loads cleanly", rid, message.sourceServer());
+                }
+                sendResult(source, message.requestId(), TransferOutcome.failed(TransferError.UNAVAILABLE, resultMessage));
                 return;
             }
 
@@ -280,6 +298,20 @@ public final class TransferCoordinator {
         } catch (RuntimeException e) {
             logger.error("routing-health probe failed: {}", e.toString());
             return false; // fail closed
+        }
+    }
+
+    /** The sanitized cause of the degraded state, or null when none could be determined. Never throws. */
+    private String degradedReason() {
+        if (degradedReasonSupplier == null) {
+            return null;
+        }
+        try {
+            String sanitized = DegradedReasons.sanitize(degradedReasonSupplier.get());
+            return sanitized.isEmpty() ? null : sanitized;
+        } catch (RuntimeException e) {
+            logger.error("degraded-reason probe failed: {}", e.toString());
+            return null;
         }
     }
 

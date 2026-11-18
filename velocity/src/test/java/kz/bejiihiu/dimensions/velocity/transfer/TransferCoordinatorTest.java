@@ -64,6 +64,7 @@ class TransferCoordinatorTest {
                 () -> healthy,
                 () -> DIMENSIONS,
                 () -> Duration.ofSeconds(5),
+                () -> null,
                 LOGGER, CHANNEL);
     }
 
@@ -181,7 +182,7 @@ class TransferCoordinatorTest {
     @Test
     void transferTimesOutAndBackendGetsTimeoutResult() {
         coordinator = new TransferCoordinator(platform, operations,
-                () -> healthy, () -> DIMENSIONS, () -> Duration.ofMillis(150), LOGGER, CHANNEL);
+                () -> healthy, () -> DIMENSIONS, () -> Duration.ofMillis(150), () -> null, LOGGER, CHANNEL);
         UUID requestId = UUID.randomUUID();
         CompletableFuture<ConnectionRequestBuilder.Result> stuck = new CompletableFuture<>();
         platform.setConnectFuture(stuck);
@@ -313,6 +314,47 @@ class TransferCoordinatorTest {
         assertFalse(result.ok());
         assertEquals(TransferError.UNAVAILABLE, result.error());
         assertEquals(1, operations.stats().refusedBrokenConfig.get());
+    }
+
+    @Test
+    void brokenConfigurationRefusalCarriesSanitizedReason() {
+        healthy = false;
+        coordinator = new TransferCoordinator(platform, operations,
+                () -> healthy, () -> DIMENSIONS, () -> Duration.ofSeconds(5),
+                () -> "database.password references environment variable 'DB_PASSWORD'\n"
+                        + "which is not set   or   is blank",
+                LOGGER, CHANNEL);
+        UUID requestId = UUID.randomUUID();
+
+        coordinator.handleTransferRequest(defaultRequest(requestId), source);
+
+        DimensionTransferResultMessage result = lastResult();
+        assertFalse(result.ok());
+        assertEquals(TransferError.UNAVAILABLE, result.error());
+        assertNotNull(result.message());
+        assertTrue(result.message().contains("DB_PASSWORD"));
+        assertFalse(result.message().contains("\n"), "the wire message must be a single line");
+        assertTrue(result.message().contains("reload"));
+    }
+
+    @Test
+    void brokenConfigurationRefusalSurvivesAThrowingReasonSupplier() {
+        healthy = false;
+        coordinator = new TransferCoordinator(platform, operations,
+                () -> healthy, () -> DIMENSIONS, () -> Duration.ofSeconds(5),
+                () -> {
+                    throw new IllegalStateException("reason probe exploded");
+                },
+                LOGGER, CHANNEL);
+        UUID requestId = UUID.randomUUID();
+
+        coordinator.handleTransferRequest(defaultRequest(requestId), source);
+
+        DimensionTransferResultMessage result = lastResult();
+        assertFalse(result.ok());
+        assertEquals(TransferError.UNAVAILABLE, result.error());
+        assertTrue(result.message().contains("broken"));
+        assertFalse(result.message().contains("reason probe exploded"), "internal probe text must not leak to the wire");
     }
 
     // --------------------------------------------------------------- send failure

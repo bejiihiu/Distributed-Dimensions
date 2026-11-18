@@ -9,6 +9,7 @@ import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
+import kz.bejiihiu.dimensions.common.config.ConfigurationException;
 import kz.bejiihiu.dimensions.common.config.ConfigurationService;
 import kz.bejiihiu.dimensions.common.config.EnvLookup;
 import kz.bejiihiu.dimensions.common.config.Environment;
@@ -23,6 +24,8 @@ import org.slf4j.Logger;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Entry point of the Velocity companion. The proxy owns connection routing and request
@@ -33,10 +36,15 @@ import java.time.Clock;
  * <ol>
  *   <li>register the {@code distributeddimensions:transfer} channel;</li>
  *   <li>load {@code plugins/distributeddimensions/config.yml} via the common configuration
- *       service (bundled defaults on first start);</li>
- *   <li>record the configuration health. When the file is broken the plugin enables in a
- *       fail-closed mode - routing is refused with a clear error back to the backend - and
- *       never half-opens; {@code /ddproxy reload} re-enables routing after a clean load;</li>
+ *       service (bundled defaults on first start). A total load failure - even the bundled
+ *       defaults failing env expansion, e.g. {@code database.password: ${DB_PASSWORD}} with
+ *       no {@code DB_PASSWORD} in the service environment - never takes the plugin down:
+ *       boot continues in DEGRADED (diagnostic) mode;</li>
+ *   <li>transfer pipeline and listeners are registered regardless of configuration health.
+ *       In DEGRADED mode every {@code dimension_transfer_request} is refused with an
+ *       explicit {@code UNAVAILABLE} result naming the cause; routing is never half-open.
+ *       {@code /ddproxy reload} re-reads the file/environment; a clean load re-enables
+ *       routing with no restart;</li>
  *   <li>register the plugin-message and disconnect listeners and the {@code /ddproxy} command.</li>
  * </ol>
  *
@@ -58,6 +66,7 @@ public class DistributedDimensionsVelocityPlugin {
     private final Logger logger;
     private final ProxyServer proxy;
     private final Path dataDirectory;
+    private final EnvLookup env;
 
     // assigned in onProxyInitialize; volatile-ish usage is fine within the event thread
     private volatile boolean channelRegistered;
@@ -65,10 +74,15 @@ public class DistributedDimensionsVelocityPlugin {
 
     @Inject
     public DistributedDimensionsVelocityPlugin(Logger logger, ProxyServer proxy, @DataDirectory Path dataDirectory) {
-        // injection fields only - the construction phase stays untouched
+        this(logger, proxy, dataDirectory, EnvLookup.system());
+    }
+
+    // package-private: tests boot the plugin against a controlled environment lookup
+    DistributedDimensionsVelocityPlugin(Logger logger, ProxyServer proxy, Path dataDirectory, EnvLookup env) {
         this.logger = logger;
         this.proxy = proxy;
         this.dataDirectory = dataDirectory;
+        this.env = env;
     }
 
     @Subscribe
@@ -82,16 +96,19 @@ public class DistributedDimensionsVelocityPlugin {
             logger.error("failed to register channel {}: {} - backends will not get through", CHANNEL.getId(), e.toString());
         }
 
-        // 2. configuration, loaded once here; health is recorded, not assumed
+        // 2. configuration, loaded once here; a total load failure degrades the plugin, it
+        //    does not kill it (see class javadoc). Components below are wired unconditionally.
         ConfigurationService configuration = new ConfigurationService(
-                Environment.resolve(dataDirectory), EnvLookup.system(), logger::warn);
-        configuration.load();
-        if (configuration.isHealthy()) {
-            logger.info("configuration loaded (config-version {})", configuration.config().configVersion());
-        } else {
-            configuration.health().ifPresent(error ->
-                    logger.error("configuration is broken: {} - transfers DISABLED until a clean load; "
-                                    + "routing will be refused with a clear error to the backends", error.getMessage()));
+                Environment.resolve(dataDirectory), env, logger::warn);
+        String bootFailure = null;
+        try {
+            configuration.load();
+        } catch (RuntimeException e) {
+            // ConfigurationException: even the bundled-defaults fallback failed (e.g. the
+            // ${VAR} expansion of database.password with no variable in the environment).
+            // Anything else is treated the same way - degraded, never propagated.
+            // The single SEVERE line with the actionable fix is logged below, once.
+            bootFailure = DegradedReasons.sanitize(e.getMessage());
         }
 
         // 3. transfer pipeline
@@ -101,6 +118,7 @@ public class DistributedDimensionsVelocityPlugin {
                 configuration::isHealthy,
                 () -> configuration.config().network().dimensions(),
                 () -> configuration.config().network().transfer().timeout(),
+                degradedReasonSupplier(configuration, bootFailure),
                 logger, CHANNEL);
 
         proxy.getEventManager().register(this, new PluginMessageListener(CHANNEL, coordinator, platform, operations.stats(), logger));
@@ -112,12 +130,21 @@ public class DistributedDimensionsVelocityPlugin {
         CommandMeta meta = proxy.getCommandManager().metaBuilder("ddproxy").plugin(this).build();
         proxy.getCommandManager().register(meta, new DdProxyCommand(services));
 
-        if (configuration.isHealthy()) {
+        boolean healthy = configuration.isHealthy();
+        if (healthy) {
+            logger.info("configuration loaded (config-version {})", configuration.config().configVersion());
             logger.info("Distributed Dimensions enabled (channel {})", CHANNEL.getId());
-        } else {
-            logger.error("Distributed Dimensions enabled in DEGRADED mode (channel {}): transfers are disabled, "
-                    + "fix the configuration and run '/ddproxy reload'", CHANNEL.getId());
+            return;
         }
+        String reason = liveDegradedReason(configuration, bootFailure);
+        logger.error("*** DEGRADED MODE *** configuration failed to load: {} - "
+                        + "set DB_PASSWORD (or set database.password to \"\" for no credentials) - "
+                        + "the proxy enables in diagnostic mode until then. "
+                        + "Every transfer is refused with UNAVAILABLE; run '/ddproxy status' for the full reason "
+                        + "and '/ddproxy reload' after fixing the environment or config.yml",
+                reason == null ? "unknown cause (see the log above)" : reason);
+        logger.error("Distributed Dimensions enabled in DEGRADED mode (channel {}): transfers are disabled, "
+                + "fix the configuration and run '/ddproxy reload'", CHANNEL.getId());
     }
 
     @Subscribe
@@ -132,5 +159,26 @@ public class DistributedDimensionsVelocityPlugin {
         } else {
             logger.info("Distributed Dimensions disabled");
         }
+    }
+
+    /**
+     * Builds the live supplier of the failure reason for the fail-closed gate. Reads the
+     * service's live state so a {@code /ddproxy reload} that fixes the failure stops
+     * reporting the boot-time cause immediately; the boot-time capture is used only when
+     * the service holds no live health detail (a raw boot failure it never recorded).
+     */
+    private static Supplier<String> degradedReasonSupplier(ConfigurationService configuration, String bootFailure) {
+        return () -> liveDegradedReason(configuration, bootFailure);
+    }
+
+    private static String liveDegradedReason(ConfigurationService configuration, String bootFailure) {
+        Optional<ConfigurationException> live = configuration.health();
+        if (live.isPresent()) {
+            return DegradedReasons.sanitize(live.get().getMessage());
+        }
+        if (configuration.isHealthy()) {
+            return null; // routing is open; the supplier is unused
+        }
+        return bootFailure; // raw boot failure: nothing live was recorded
     }
 }

@@ -139,13 +139,16 @@ plugin, grant to admins explicitly).
 /ddproxy transfers [n]     # last n operations (default 10, max 50), newest first
 ```
 
-`status` reports: configuration health (or the exact load error and the degraded mode it
-implies), whether the `distributeddimensions:transfer` channel is registered, the resolved
-dimension → server map, in-flight operations and pending capacity, outcome-replay cache
-size and TTL, and the operation counters.
+`status` reports: configuration health (or, on an unloadable boot, the exact load error and
+the degraded mode it implies — `/ddproxy status` shows the degraded reason, e.g. the missing
+`DB_PASSWORD`), whether the `distributeddimensions:transfer` channel is registered, the
+resolved dimension → server map, in-flight operations and pending capacity, outcome-replay
+cache size and TTL, and the operation counters.
 
 `reload` re-reads the proxy `config.yml`; a clean load re-enables routing, a broken file
-keeps the last-good configuration and routing stays disabled.
+keeps the last-good configuration and routing stays disabled. When nothing was ever
+loadable (unloadable boot), a fixed environment plus `reload` fully re-enables routing
+without a restart.
 
 `transfers [n]` lists the newest completed/failed/abandoned operations with kind, player,
 source → target, duration and error classification (if any). `n` is capped at 50.
