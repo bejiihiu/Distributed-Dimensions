@@ -5,7 +5,6 @@ Orchestrates the three Minecraft dimensions across three independent Paper/Folia
 [![CI](https://github.com/bejiihiu/Distributed-Dimensions/actions/workflows/build.yml/badge.svg)](https://github.com/bejiihiu/Distributed-Dimensions/actions/workflows/build.yml)
 [![Release](https://img.shields.io/badge/release-v1.0.0-blue)](https://github.com/bejiihiu/Distributed-Dimensions/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Minecraft Java 1.21](https://img.shields.io/badge/Minecraft_Java-1.21.x-62B47A)](https://www.minecraft.net/en-us/edition/java)
 [![Paper 26.3+](https://img.shields.io/badge/Paper-26.3+-dfb317)](https://papermc.io/downloads/paper)
 [![Folia 26.3+](https://img.shields.io/badge/Folia-26.3+-3ba676)](https://papermc.io/downloads/folia)
 [![Velocity 4.2+](https://img.shields.io/badge/Velocity-4.2+-1b9aaa)](https://papermc.io/downloads/velocity)
