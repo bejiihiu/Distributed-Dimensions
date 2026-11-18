@@ -112,7 +112,7 @@ public final class AdminSurface {
                 }
                 LoadReport report = configService.report();
                 return new AdminInfo(
-                        plugin.getDescription().getVersion(),
+                        plugin.getPluginMeta().getVersion(),
                         Bukkit.getVersion(),
                         health.status().name(),
                         health.reasons(),
@@ -140,7 +140,7 @@ public final class AdminSurface {
             } catch (RuntimeException e) {
                 // An info probe must never take the command down; report it as degraded data.
                 return new AdminInfo(
-                        plugin.getDescription().getVersion(),
+                        plugin.getPluginMeta().getVersion(),
                         Bukkit.getVersion(),
                         HealthReport.Status.DEGRADED.name(),
                         List.of("info snapshot failed: " + e.getMessage()),
@@ -161,7 +161,7 @@ public final class AdminSurface {
                 LoadReport report = configService.report();
                 if (!configService.isHealthy()) {
                     String reason = configService.health()
-                            .map(error -> error.getMessage())
+                            .map(kz.bejiihiu.dimensions.common.config.ConfigurationException::getMessage)
                             .orElse("configuration fell back to a non-clean state");
                     return ReloadOutcome.failure(
                             report == null ? -1 : report.configVersion(),
