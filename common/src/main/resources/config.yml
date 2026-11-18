@@ -1,0 +1,154 @@
+# Distributed Dimensions — configuration
+# This file is written on first start. Missing keys are healed from the bundled
+# defaults at load time; unknown keys are reported as warnings and ignored.
+# Lines starting with # are comments. Values may reference environment variables
+# as ${VAR_NAME} — in the database section they are expanded at load time and a
+# missing variable stops startup with a clear message.
+
+general:
+  # Message/localization language used by the plugin: "en" or "ru".
+  language: "en"
+
+  # When true, no vanilla-incompatible behavior is applied: the plugin only
+  # assists the vanilla flow instead of replacing it.
+  strict-vanilla-mode: true
+
+network:
+  proxy:
+    # Proxy-mode availability: the backend advertises transfer targets and the
+    # proxy performs the actual player switch. False = backend-only deployments.
+    enabled: true
+
+  transfer:
+    # Milliseconds before a cross-server transfer is considered failed.
+    timeout: 10000
+    # How many times a failed transfer is retried before giving up.
+    max-retries: 2
+
+  dimensions:
+    overworld:
+      # Velocity server name and the dimension the player ends up in.
+      server: "overworld"
+      dimension: "minecraft:overworld"
+    nether:
+      server: "nether"
+      dimension: "minecraft:the_nether"
+    end:
+      server: "end"
+      dimension: "minecraft:the_end"
+
+portals:
+  nether:
+    enabled: true
+
+    # Keep the vanilla portal feel instead of replacing it with instant teleports.
+    preserve-vanilla-delay: true
+    preserve-vanilla-search: true
+    preserve-vanilla-creation: true
+    preserve-vanilla-orientation: true
+
+  end:
+    enabled: true
+
+  gateway:
+    enabled: true
+
+entities:
+  cross-server-transfer:
+    enabled: false
+
+    players: true
+    mobs: false
+    items: false
+    vehicles: false
+
+    # Entities may create a portal when it is missing (vanilla 1.21+).
+    portals-create: true
+
+    # Chunk tickets for the portal-destination chunks (re-applied on every transfer).
+    chunk-tickets:
+      enabled: true
+      # Ring loading around the portal (destination chunks form a one-chunk ring).
+      ring: true
+
+api:
+  enabled: true
+
+  compat:
+    # Synthetic PlayerPortalEvent/PlayerTeleportEvent on the target server.
+    fire-synthetic-events: false
+
+    # Idempotent advancement criteria grant (enter_the_nether / enter_the_end).
+    grant-advancements: true
+
+sync:
+  # Player data is synchronized by a separate external plugin;
+  # this section only holds the integration points.
+  enabled: true
+
+  wait-for-sync: true
+
+  # Which sync plugin to use; "auto" — detect automatically.
+  plugin: "auto"
+
+redis:
+  # Not required, but recommended; the plugin works without it.
+  enabled: false
+
+database:
+  # Engine: mysql | mariadb | postgresql | mongodb.
+  # HikariCP for SQL; MongoDB uses the sync driver's built-in pool.
+  type: "mysql"
+
+  # JDBC URL for mysql/mariadb/postgresql. ${VAR} references are expanded at load.
+  jdbc-url: "jdbc:mysql://localhost:3306/distributed_dimensions"
+
+  # Credentials. ${VAR} references are expanded at load time; a missing variable
+  # stops startup with a clear message. Empty string = no credentials (local
+  # trust-auth setups only). Never commit real passwords.
+  username: "distributed_dimensions"
+  password: "${DB_PASSWORD}"
+
+  # MongoDB only: the logical database. Blank = "distributed_dimensions".
+  # For SQL this is ignored.
+  mongo-uri: "mongodb://localhost:27017"
+  mongo-database: "distributed_dimensions"
+
+  # Pool sizing (Hikari for SQL; maps to the MongoDB pool for mongodb).
+  maximum-pool-size: 10
+  minimum-idle: 2
+  # Milliseconds before giving up on a connection.
+  connection-timeout: 5000
+  # Identifier prefix for every table/collection created by the plugin.
+  # Must match [a-z][a-z0-9_]{0,30} with an optional trailing underscore.
+  table-prefix: "dd_"
+
+debug:
+  # Verbose logging for the individual subsystems; keep false in production.
+  portal-search: false
+  coordinate-conversion: false
+  transfers: false
+  entity-transfer: false
+
+mirage:
+  # Mirage (void) dimensions local hints for the backend worlds that live on
+  # other servers; see the design notes for how they are used.
+  enabled: true
+
+  # Canonical world names, by Bukkit convention derived from the level-name.
+  # Override only when the level-name is non-standard.
+  names:
+    overworld: "world"
+    nether: "world_nether"
+    end: "world_the_end"
+
+  # What to do when a block edit is attempted inside a mirage world.
+  # Currently the only supported value is "cancel".
+  block-edits: "cancel"
+
+  # Gamerule fixed time for mirage worlds (noon). 0..24000.
+  fixed-time: 6000
+
+# Internal schema version. Do not edit by hand; bumped by the migration
+# framework when the schema changes.
+config-version: 1
