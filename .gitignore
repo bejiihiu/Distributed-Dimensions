@@ -21,3 +21,6 @@ hs_err_pid*
 run/
 run-velocity/
 notes/
+
+# smoke/dev networks
+run-*/
