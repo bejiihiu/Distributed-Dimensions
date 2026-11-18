@@ -102,10 +102,20 @@ AsyncPlayerSpawnLocationEvent   (configuration phase; player NOT in the world ye
   4. an async 2x-timeout "claim watchdog" is armed for the whole claim->finalize window
 
 PlayerJoinEvent                 (player now in the world)
-  5. entity scheduler: if a claim is pending, verify placement —
-       stored position: optional PositionValidator veto (bed/anchor presence + charge);
-       invalid -> teleport to the world spawn (vanilla "missing respawn block" semantics);
-       materially different placement -> teleport (PLUGIN cause)
+  5. sync wait: SyncServices.get() -> awaitSync(player) — never joined; the placement
+     work below runs only after the wait completes normally:
+       - degraded=true (level D / disabled): logged; the arrival proceeds unconfirmed
+       - sync services entirely missing (get() throws): warning; proceed degraded
+     then, on the entity's scheduler:
+       - stored position: optional PositionValidator veto (bed/anchor presence + charge);
+         invalid -> teleport to the world spawn (vanilla "missing respawn block" semantics);
+         materially different placement -> teleport (PLUGIN cause)
+  5b. on exceptional completion (SyncTimeoutException or any future error):
+       - the player is NOT moved (keeps the provisional spawn placement)
+       - journal row -> FAILED with the mapped error; the player uuid + reason are
+         logged at SEVERE; DimensionTransferFailedEvent dispatched exactly once
+         (playerOnline=false when the player already left)
+       - DimensionTransferCompleteEvent is NOT dispatched
   6. two entity-scheduler ticks later:
        - chunk ticket is added for the arrival chunk (floor-div, 15s TTL refresh semantics
          from the vanilla destination-loader window; the ring-of-8 is governed by
@@ -114,9 +124,10 @@ PlayerJoinEvent                 (player now in the world)
        - DimensionTransferCompleteEvent is dispatched (durationMillis = now - createdAt)
 ```
 
-`DimensionTransferCompleteEvent` fires **only** if this backend's CAS transitions succeeded —
-a concurrent terminal move (e.g. the source watchdog) skips the event entirely, so the
-exactly-one-terminal-event guarantee holds on the target too.
+`DimensionTransferCompleteEvent` fires **only** if the sync wait completed normally and
+this backend's CAS transitions succeeded — a concurrent terminal move (e.g. the source
+watchdog) skips the event entirely, so the exactly-one-terminal-event guarantee holds on
+the target too.
 
 ### Arrival plans
 
@@ -180,7 +191,10 @@ the transfer — it only redirects placement.
 | Player disconnected mid-switch | proxy replies DISCONNECTED -> result path, or claim watchdog | `FAILED (DISCONNECTED or TIMEOUT)` | failed (playerOnline=false) | gone; journal terminal |
 | Player quit during configuration | claim watchdog @ 2x timeout | `FAILED (TIMEOUT)` | none (no player to reference) | gone; journal terminal |
 | Stored respawn block gone | `PositionValidator` at join | `COMMITTED` | complete (fallback placement) | world spawn (vanilla semantics) |
-| Player quit before finalize | claim watchdog @ 2x timeout | `FAILED (TIMEOUT)` | none (no player reference) | journal terminal; partial teleport possible (edge) |
+| Sync wait timed out / errored | `SyncTimeoutException` / exceptional future | `FAILED` (timeout: `TIMEOUT`; player left: `DISCONNECTED`; broken integration: `UNAVAILABLE`) | failed (phase = state at detection, never terminal) | NOT moved — keeps the provisional spawn placement |
+| Sync degraded completion (level D) | normal completion, `degraded=true` | `COMMITTED` | complete | normal arrival (unconfirmed) |
+| Sync services entirely missing | `SyncServices.get()` throws | `COMMITTED` | complete | normal arrival, degraded + warning logged |
+| Player quit before finalize | claim watchdog @ 2x timeout (sync wait failure wins first in practice) | `FAILED (TIMEOUT)` | none if the watchdog wins with no player reference; failed (playerOnline=false) if the sync path fails first | journal terminal; partial teleport possible (edge) |
 | Lost CAS at finalize | concurrent terminal move | unchanged (already terminal) | complete **skipped** | normal arrival |
 | Chunk-ticket failure | caught | unchanged | complete | normal arrival (ticket is an optimization) |
 
@@ -190,12 +204,13 @@ the transfer — it only redirects placement.
 
 - Source: `DimensionTransferStartEvent` strictly before any disconnect / request send;
   cancellation vetoes the transfer; cancelled start produces **no** failed event.
-- Target: `PlayerJoinEvent` -> (external sync plugins complete) ->
-  `DimensionTransferCompleteEvent`. The complete event is dispatched two entity-scheduler
-  ticks after the join-time teleport verification, i.e. after our own placement work settles.
-  **Caveat:** the HuskSync / external-sync integration that makes "sync finished" a hard
-  ordering guarantee is a separate wave; until it lands, `DimensionTransferCompleteEvent`
-  marks the earliest point a third-party listener may act on the post-transfer state.
+- Target: `PlayerJoinEvent` -> bounded sync wait (`SyncServices.get()` →
+  `awaitSync(player)`, never joined, bounded by `sync.wait-timeout`) -> placement
+  (validator/teleport) -> two entity-scheduler ticks -> `DimensionTransferCompleteEvent`.
+  The complete event fires only after the wait completes normally; if the wait fails, the
+  complete event never fires and `DimensionTransferFailedEvent` is dispatched instead.
+  On a degraded completion (level D / wait disabled) the event fires unconfirmed — the
+  report's `degraded` flag is log-only.
 - Exactly one of `DimensionTransferCompleteEvent` / `DimensionTransferFailedEvent` per
   operation, always dispatched on the backend that terminally recorded the outcome.
 

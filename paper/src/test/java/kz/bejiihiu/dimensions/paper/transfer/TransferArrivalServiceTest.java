@@ -7,12 +7,15 @@ import kz.bejiihiu.dimensions.common.model.RespawnKind;
 import kz.bejiihiu.dimensions.common.model.RespawnPointRecord;
 import kz.bejiihiu.dimensions.common.model.TransferCause;
 import kz.bejiihiu.dimensions.common.model.TransferOperation;
+import kz.bejiihiu.dimensions.common.model.TransferError;
 import kz.bejiihiu.dimensions.common.persistence.RespawnPointStore;
 import kz.bejiihiu.dimensions.common.persistence.PersistenceException;
 import kz.bejiihiu.dimensions.paper.FakeArrivalWorldLookup;
 import kz.bejiihiu.dimensions.paper.FakePlayers;
 import kz.bejiihiu.dimensions.paper.TestWorlds;
 import kz.bejiihiu.dimensions.paper.end.EndArrivalPlanResolver;
+import kz.bejiihiu.dimensions.paper.sync.FakeSyncOperations;
+import kz.bejiihiu.dimensions.paper.sync.TimeoutReason;
 
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -31,6 +34,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -38,7 +42,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Target-side arrival: claim CAS, plan resolution (End entry vs exit with and without
  * respawn records), spawn placement, validator fallback, chunk tickets, terminal journal
- * transitions and the Complete event contract.
+ * transitions, the sync gate (happy path, timeout, missing services, disconnect mid-wait,
+ * degraded reports, no duplicate events on retry) and the Complete event contract.
  */
 class TransferArrivalServiceTest {
 
@@ -49,6 +54,7 @@ class TransferArrivalServiceTest {
     Path tempDir;
 
     private FakeTransferBackend backend;
+    private FakeSyncOperations sync;
     private TransferArrivalService arrivals;
     private World overworld, nether, endWorld;
     private FakeArrivalWorldLookup worlds;
@@ -56,6 +62,7 @@ class TransferArrivalServiceTest {
     @BeforeEach
     void setUp() {
         backend = new FakeTransferBackend(FakeTransferBackend.loadDefaults(tempDir));
+        sync = new FakeSyncOperations();
         overworld = TestWorlds.create("world", World.Environment.NORMAL);
         nether = TestWorlds.create("world_nether", World.Environment.NETHER);
         endWorld = TestWorlds.create("world_the_end", World.Environment.THE_END);
@@ -67,7 +74,8 @@ class TransferArrivalServiceTest {
 
     private TransferArrivalService newTransferArrivals(PositionValidator validator) {
         EndArrivalPlanResolver resolver = new EndArrivalPlanResolver(backend);
-        return new TransferArrivalService(backend, Clock.fixed(T0, ZoneOffset.UTC), resolver, validator);
+        return new TransferArrivalService(backend, Clock.fixed(T0, ZoneOffset.UTC),
+                resolver, validator, () -> sync);
     }
 
     private TransferOperation seedPending(UUID playerUuid, TransferCause cause,
@@ -318,6 +326,223 @@ class TransferArrivalServiceTest {
 
         TransferOperation row = backend.journalFake().findById(op.operationId()).orElseThrow();
         assertEquals(OperationState.FAILED, row.state());
+        assertTrue(backend.eventRecorder().completes().isEmpty());
+    }
+
+    @Test
+    void syncReadyProceedsWithTeleportAndCompleteEvent() {
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 5.0, 80.0, 5.0, 0.0f, 0.0f), true);
+        claim(playerUuid);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+
+        assertEquals(List.of(playerUuid), sync.awaitedPlayers());
+        Location landed = FakePlayers.location(player);
+        assertEquals(100.5, landed.getX());   // placement gated on sync, applied once ready
+        assertEquals(0.5, landed.getZ());
+        assertEquals(1, backend.eventRecorder().completes().size());
+        assertEquals(op.operationId(), backend.eventRecorder().completes().get(0).operationId());
+        assertTrue(backend.eventRecorder().failures().isEmpty());
+        assertEquals(OperationState.COMMITTED,
+                backend.journalFake().findById(op.operationId()).orElseThrow().state());
+    }
+
+    @Test
+    void syncTimeoutSkipsTeleportAndFailsTheOperation() {
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Location joinSpot = new Location(overworld, 5.0, 80.0, 5.0, 0.0f, 0.0f);
+        Player player = FakePlayers.create(playerUuid, joinSpot, true);
+        claim(playerUuid);
+        sync.setTimeout(TimeoutReason.WAIT_TIMEOUT);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+
+        Location landed = FakePlayers.location(player);
+        assertEquals(5.0, landed.getX());   // NOT moved — keeps the provisional spawn placement
+        assertEquals(5.0, landed.getZ());
+        assertTrue(backend.eventRecorder().completes().isEmpty());
+        List<RecordingTransferEventDispatcher.FailedCall> failures = backend.eventRecorder().failures();
+        assertEquals(1, failures.size());
+        assertEquals(TransferError.TIMEOUT, failures.get(0).error());
+        assertEquals(OperationState.TARGET_CREATED, failures.get(0).phase());
+        assertTrue(failures.get(0).playerOnline());
+        TransferOperation row = backend.journalFake().findById(op.operationId()).orElseThrow();
+        assertEquals(OperationState.FAILED, row.state());
+        assertEquals(TransferError.TIMEOUT, row.error());
+        assertNotNull(row.errorMessage());
+        assertTrue(backend.severeLog().stream().anyMatch(s ->
+                s.contains(playerUuid.toString()) && s.contains("timeout")));
+
+        // the claim watchdog cannot re-fire once the row is terminal and pending is cleared
+        backend.fakeSchedulers().advanceMillis(20_001L);
+        assertEquals(1, backend.eventRecorder().failures().size());
+        assertTrue(backend.eventRecorder().completes().isEmpty());
+    }
+
+    @Test
+    void syncServicesMissingProceedsDegradedWithWarning() {
+        EndArrivalPlanResolver resolver = new EndArrivalPlanResolver(backend);
+        TransferArrivalService missing = new TransferArrivalService(backend, Clock.fixed(T0, ZoneOffset.UTC),
+                resolver, PositionValidator.ALWAYS, () -> null);
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 100.5, 49.0, 0.5, 90.0f, 0.0f), true);
+        assertTrue(missing.claimAndPlan(playerUuid, worlds).isPresent());
+
+        missing.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+
+        assertEquals(1, backend.eventRecorder().completes().size());
+        assertTrue(backend.eventRecorder().failures().isEmpty());
+        assertEquals(OperationState.COMMITTED,
+                backend.journalFake().findById(op.operationId()).orElseThrow().state());
+        assertTrue(backend.warningLog().stream().anyMatch(w ->
+                w.contains("WITHOUT sync confirmation") && w.contains(playerUuid.toString())));
+    }
+
+    @Test
+    void syncLookupThrowingProceedsDegradedWithWarning() {
+        EndArrivalPlanResolver resolver = new EndArrivalPlanResolver(backend);
+        TransferArrivalService broken = new TransferArrivalService(backend, Clock.fixed(T0, ZoneOffset.UTC),
+                resolver, PositionValidator.ALWAYS, () -> {
+                    throw new IllegalStateException("boot failed");
+                });
+        UUID playerUuid = UUID.randomUUID();
+        seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 100.5, 49.0, 0.5, 90.0f, 0.0f), true);
+        assertTrue(broken.claimAndPlan(playerUuid, worlds).isPresent());
+
+        broken.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+
+        assertEquals(1, backend.eventRecorder().completes().size());
+        assertTrue(backend.eventRecorder().failures().isEmpty());
+        assertTrue(backend.warningLog().stream().anyMatch(w -> w.contains("lookup failed")));
+    }
+
+    @Test
+    void disconnectDuringSyncWaitFailsOfflineWithoutTeleport() {
+        sync.setDeferred(true);   // the wait stays pending; the "disconnect" arrives while it is armed
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Location joinSpot = new Location(overworld, 5.0, 80.0, 5.0, 0.0f, 0.0f);
+        Player player = FakePlayers.create(playerUuid, joinSpot, true);
+        claim(playerUuid);
+
+        arrivals.onJoin(player, worlds);
+        assertEquals(List.of(playerUuid), sync.awaitedPlayers());   // wait armed; nothing placed yet
+
+        // the sync plugin reports the player left mid-wait (its online check fires PLAYER_OFFLINE)
+        sync.failPending(TimeoutReason.PLAYER_OFFLINE);
+        backend.fakeSchedulers().advanceTicks(2);
+
+        Location landed = FakePlayers.location(player);
+        assertEquals(5.0, landed.getX());   // still never moved
+        assertTrue(backend.eventRecorder().completes().isEmpty());
+        List<RecordingTransferEventDispatcher.FailedCall> failures = backend.eventRecorder().failures();
+        assertEquals(1, failures.size());
+        assertEquals(TransferError.DISCONNECTED, failures.get(0).error());
+        assertEquals(OperationState.TARGET_CREATED, failures.get(0).phase());
+        // the proxy player still reports online=true; the PLAYER_OFFLINE reason is authoritative
+        assertFalse(failures.get(0).playerOnline());
+        TransferOperation row = backend.journalFake().findById(op.operationId()).orElseThrow();
+        assertEquals(OperationState.FAILED, row.state());
+        assertEquals(TransferError.DISCONNECTED, row.error());
+        assertTrue(backend.severeLog().stream().anyMatch(s -> s.contains(playerUuid.toString())));
+    }
+
+    @Test
+    void degradedSyncReportStillCompletesTheArrival() {
+        sync.setReport(FakeSyncOperations.degradedReport());
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 5.0, 80.0, 5.0, 0.0f, 0.0f), true);
+        claim(playerUuid);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+
+        assertEquals(1, backend.eventRecorder().completes().size());
+        assertTrue(backend.eventRecorder().failures().isEmpty());
+        assertEquals(OperationState.COMMITTED,
+                backend.journalFake().findById(op.operationId()).orElseThrow().state());
+        Location landed = FakePlayers.location(player);
+        assertEquals(100.5, landed.getX());   // degraded=yes still proceeds, never blocks
+        assertTrue(backend.diagnosticLog().stream().anyMatch(d -> d.contains("degraded=true")));
+    }
+
+    @Test
+    void awaitSyncThrowingFailsWithUnavailable() {
+        sync.setThrowOnAwait(true);
+        UUID playerUuid = UUID.randomUUID();
+        TransferOperation op = seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 5.0, 80.0, 5.0, 0.0f, 0.0f), true);
+        claim(playerUuid);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(2);
+
+        assertTrue(backend.eventRecorder().completes().isEmpty());
+        List<RecordingTransferEventDispatcher.FailedCall> failures = backend.eventRecorder().failures();
+        assertEquals(1, failures.size());
+        assertEquals(TransferError.UNAVAILABLE, failures.get(0).error());
+        assertEquals(OperationState.FAILED,
+                backend.journalFake().findById(op.operationId()).orElseThrow().state());
+    }
+
+    @Test
+    void retriedJoinAfterCompletionDispatchesNoDuplicateEvents() {
+        UUID playerUuid = UUID.randomUUID();
+        seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 100.5, 49.0, 0.5, 90.0f, 0.0f), true);
+        claim(playerUuid);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+        // a duplicated join (double login packet, retried delivery) must not re-fire anything
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+
+        assertEquals(1, backend.eventRecorder().completes().size());
+        assertTrue(backend.eventRecorder().failures().isEmpty());
+    }
+
+    @Test
+    void retriedJoinAfterFailureDispatchesNoDuplicateEvents() {
+        sync.setTimeout(TimeoutReason.WAIT_TIMEOUT);
+        UUID playerUuid = UUID.randomUUID();
+        seedPending(playerUuid, TransferCause.END_PORTAL,
+                DimensionId.OVERWORLD, DimensionId.THE_END, END_ARRIVAL);
+        Player player = FakePlayers.create(playerUuid,
+                new Location(overworld, 5.0, 80.0, 5.0, 0.0f, 0.0f), true);
+        claim(playerUuid);
+
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+        arrivals.onJoin(player, worlds);
+        backend.fakeSchedulers().advanceTicks(3);
+        backend.fakeSchedulers().advanceMillis(20_001L);   // claim watchdog window passes
+
+        assertEquals(1, backend.eventRecorder().failures().size());
         assertTrue(backend.eventRecorder().completes().isEmpty());
     }
 

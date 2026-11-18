@@ -114,11 +114,15 @@ your call / portal entry / respawn
 On the **target** backend, after the player is ready and the sync plugin has caught up:
 
 ```
-PlayerJoinEvent → (external sync) → DimensionTransferCompleteEvent
+PlayerJoinEvent → bounded wait on the external sync plugin (sync.wait-timeout)
+                → placement (validator/teleport) → two entity-scheduler ticks
+                → DimensionTransferCompleteEvent
 ```
 
-`PlayerJoinEvent` fires before `DimensionTransferCompleteEvent` — always. If you need the
-post-transfer world state, wait for `CompleteEvent`.
+`PlayerJoinEvent` fires before `DimensionTransferCompleteEvent` — always, and the complete
+event only fires after the sync wait settles normally. If the sync wait fails, the player
+is not moved, a `DimensionTransferFailedEvent` fires instead, and the complete event never
+does. If you need the post-transfer world state, wait for `CompleteEvent`.
 
 `DimensionTransferFailedEvent` fires exactly once per operation, on the backend that
 terminally recorded the failure:

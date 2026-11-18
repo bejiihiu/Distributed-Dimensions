@@ -38,6 +38,8 @@ public final class FakeTransferBackend implements TransferBackend {
     private final ChunkTicketService chunkTickets;
     private final FakeChunkTicketGateway ticketGateway = new FakeChunkTicketGateway();
     private final List<String> diagnostics = new CopyOnWriteArrayList<>();
+    private final List<String> warnings = new CopyOnWriteArrayList<>();
+    private final List<String> severes = new CopyOnWriteArrayList<>();
 
     public FakeTransferBackend(PluginConfig config) {
         this(config, true);
@@ -89,6 +91,16 @@ public final class FakeTransferBackend implements TransferBackend {
 
     public List<String> diagnosticLog() {
         return List.copyOf(diagnostics);
+    }
+
+    /** Warning-level lines (degraded-mode visibility). */
+    public List<String> warningLog() {
+        return List.copyOf(warnings);
+    }
+
+    /** Severe-level lines (terminal failure with player identity and reason). */
+    public List<String> severeLog() {
+        return List.copyOf(severes);
     }
 
     @Override
@@ -144,6 +156,16 @@ public final class FakeTransferBackend implements TransferBackend {
     @Override
     public Consumer<String> diagnostics() {
         return diagnostics::add;
+    }
+
+    @Override
+    public Consumer<String> warn() {
+        return warnings::add;
+    }
+
+    @Override
+    public Consumer<String> severe() {
+        return severes::add;
     }
 }
 

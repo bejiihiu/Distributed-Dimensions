@@ -40,4 +40,10 @@ public interface TransferBackend {
 
     /** Diagnostics sink: info-level lines, secrets-free. */
     Consumer<String> diagnostics();
+
+    /** Warning sink: lines an operator should see even in a healthy log, secrets-free. */
+    Consumer<String> warn();
+
+    /** Error sink: terminal failure lines with player identity and reason, secrets-free. */
+    Consumer<String> severe();
 }

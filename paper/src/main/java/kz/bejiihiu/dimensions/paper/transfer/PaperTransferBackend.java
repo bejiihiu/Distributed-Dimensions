@@ -25,6 +25,8 @@ public final class PaperTransferBackend implements TransferBackend {
     private final TransferEventDispatcher events;
     private final TransferChannel channel;
     private final Consumer<String> diagnostics;
+    private final Consumer<String> warn;
+    private final Consumer<String> severe;
 
     public PaperTransferBackend(PaperServices services, TransferEventDispatcher events,
                                 TransferChannel channel, JavaPlugin plugin) {
@@ -32,6 +34,8 @@ public final class PaperTransferBackend implements TransferBackend {
         this.events = java.util.Objects.requireNonNull(events, "events");
         this.channel = java.util.Objects.requireNonNull(channel, "channel");
         this.diagnostics = message -> plugin.getSLF4JLogger().info(message);
+        this.warn = message -> plugin.getSLF4JLogger().warn(message);
+        this.severe = message -> plugin.getSLF4JLogger().error(message);
     }
 
     @Override
@@ -87,5 +91,15 @@ public final class PaperTransferBackend implements TransferBackend {
     @Override
     public Consumer<String> diagnostics() {
         return diagnostics;
+    }
+
+    @Override
+    public Consumer<String> warn() {
+        return warn;
+    }
+
+    @Override
+    public Consumer<String> severe() {
+        return severe;
     }
 }

@@ -21,7 +21,8 @@ one narrow surface (`kz.bejiihiu.dimensions.paper.sync`):
   future** — the arrival flow runs on region threads.
 - `SyncReport{ strategy, durationMillis, degraded }` — the outcome. `degraded`
   is `true` whenever nothing about the data was actually confirmed; the arrival
-  flow decides what to do about it (fail the transfer, or proceed with a warning).
+  flow proceeds with a warning — it never blocks or fails solely because
+  `degraded=true`.
 - On failure the future completes exceptionally with `SyncTimeoutException`
   (`reason()` = `WAIT_TIMEOUT` | `PLAYER_OFFLINE` | `INTEGRATION_ERROR`).
   The arrival flow translates that into its terminal failure path
@@ -276,8 +277,20 @@ Facts verified on 2026-11-18:
 
 ## Contract for the arrival flow (orchestration branches)
 
+As implemented in `TransferArrivalService`, the arrival order is:
+`PlayerJoinEvent` → `SyncServices.get()` → `awaitSync(player)` → on a normal
+completion: entity-scheduler placement (`teleport`/`PositionValidator`) → two
+entity-scheduler ticks → journal `COMMITTED` + `DimensionTransferCompleteEvent`.
+If `SyncServices.get()` itself throws (plugin disabled or boot failed), the arrival flow
+proceeds in degraded mode with a warning instead of crashing — the placement steps run
+and the complete event fires, exactly as with a level-D unconfirmed completion.
+
+On an exceptional completion: the player is NOT moved, the journal row goes `FAILED`
+with the mapped error, and `DimensionTransferFailedEvent` fires (with
+`playerOnline=false` if the player already left) — the complete event never fires.
+
 ```java
-// somewhere on the arrival path, never from a pre-login/configuration context
+// never from a pre-login/configuration context (the claim path stays sync-fast)
 SyncServices services = SyncServices.get();           // throws ISE when disabled/failed
 services.coordinator().awaitSync(player)
         .thenAccept(report -> {

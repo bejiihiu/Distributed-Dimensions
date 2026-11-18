@@ -6,6 +6,11 @@ import kz.bejiihiu.dimensions.common.model.Position;
 import kz.bejiihiu.dimensions.common.model.TransferError;
 import kz.bejiihiu.dimensions.common.model.TransferOperation;
 import kz.bejiihiu.dimensions.paper.scheduler.RegionMath;
+import kz.bejiihiu.dimensions.paper.scheduler.TaskHandle;
+import kz.bejiihiu.dimensions.paper.sync.SyncOperations;
+import kz.bejiihiu.dimensions.paper.sync.SyncReport;
+import kz.bejiihiu.dimensions.paper.sync.SyncTimeoutException;
+import kz.bejiihiu.dimensions.paper.sync.TimeoutReason;
 
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -20,7 +25,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -32,27 +40,39 @@ import java.util.concurrent.TimeUnit;
  *       (async). Claims the newest pending operation for the joining player
  *       (CAS {@code CREATED|PREPARING -> TARGET_CREATED}), resolves the arrival plan and
  *       records the placement in a short-lived pending map. Nothing here touches the
- *       world.</li>
- *   <li>{@link #onJoin} — called from {@code PlayerJoinEvent}. Applies the plan: a
- *       stored position that no longer passes validation falls back to world spawn
- *       (vanilla missing-respawn-block semantics); anything materially different from
- *       the join placement gets an explicit teleport.</li>
- *   <li>Finalization — after two entity-scheduler ticks (post sync window), chunk tickets
- *       are applied, the journal row advances {@code TARGET_CREATED -> SOURCE_REMOVED ->
+ *       world and nothing here waits for the external sync plugin — the provisional
+ *       spawn placement is the safety net for slow syncs.</li>
+ *   <li>{@link #onJoin} — called from {@code PlayerJoinEvent}. Attaches
+ *       {@code SyncOperations.awaitSync(player)}; only when the wait completes normally
+ *       does the placement work run — a stored position that no longer passes validation
+ *       falls back to world spawn (vanilla missing-respawn-block semantics); anything
+ *       materially different from the join placement gets an explicit teleport. The sync
+ *       wait never blocks a thread; it is bounded by the integration's own timeout.</li>
+ *   <li>Finalization — after sync readiness settles and two entity-scheduler ticks later,
+ *       chunk tickets are applied, the journal row advances {@code TARGET_CREATED -> SOURCE_REMOVED ->
  *       COMMITTED} and {@code DimensionTransferCompleteEvent} is dispatched — but only by
  *       the party whose CAS transitions succeeded, so the event fires exactly once.</li>
  * </ol>
  *
+ * <p>On sync wait failure ({@link SyncTimeoutException}, or any exceptional future
+ * completion) the player is NOT moved — they keep the provisional spawn placement. The
+ * operation is terminally failed with the mapped {@code TransferError}, the row carries
+ * the reason, a SEVERE line logs player uuid + reason, and
+ * {@code DimensionTransferFailedEvent} fires exactly once (with {@code playerOnline=false}
+ * when the player already left). {@code DimensionTransferCompleteEvent} never fires for
+ * such an operation. If the sync services are entirely missing (plugin disabled or boot
+ * failed), the arrival proceeds in degraded mode with a warning — never crashes.
+ *
  * <p>If the player never completes the arrival (disconnected during the configuration
- * phase), a two-timeout watchdog terminally fails the operation as
- * {@link TransferError#TIMEOUT} — the row never lingers non-terminal.
+ * phase, or before the sync wait settles), a two-timeout watchdog terminally fails the
+ * operation as {@link TransferError#TIMEOUT} — the row never lingers non-terminal.
  *
  * <p>Players with no pending operation are unaffected: {@code onJoin} does nothing and
  * vanilla join behaviour stands.
  */
 public final class TransferArrivalService {
 
-    /** Entity-scheduler ticks to wait between the teleport-verify and the Complete event. */
+    /** Entity-scheduler ticks to wait between the placement settle and the journal commit/Complete event. */
     private static final long COMPLETE_EVENT_DELAY_TICKS = 2L;
 
     /** What the spawn event should do with the player. */
@@ -68,14 +88,23 @@ public final class TransferArrivalService {
     private final Clock clock;
     private final ArrivalPlanResolver plans;
     private final PositionValidator validator;
+    private final SyncLookup syncLookup;
     private final Map<UUID, ArrivalCompletion> pending = new ConcurrentHashMap<>();
 
     public TransferArrivalService(TransferBackend backend, Clock clock,
                                   ArrivalPlanResolver plans, PositionValidator validator) {
+        this(backend, clock, plans, validator, SyncLookup.platform());
+    }
+
+    /** Wiring seam for the sync gate — production uses the default platform lookup. */
+    public TransferArrivalService(TransferBackend backend, Clock clock,
+                                  ArrivalPlanResolver plans, PositionValidator validator,
+                                  SyncLookup syncLookup) {
         this.backend = java.util.Objects.requireNonNull(backend, "backend");
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
         this.plans = java.util.Objects.requireNonNull(plans, "plans");
         this.validator = java.util.Objects.requireNonNull(validator, "validator");
+        this.syncLookup = java.util.Objects.requireNonNull(syncLookup, "syncLookup");
     }
 
     // ------------------------------------------------------- claim (async)
@@ -207,18 +236,175 @@ public final class TransferArrivalService {
     // ------------------------------------------------------- join + finalize
 
     /**
-     * Called from {@code PlayerJoinEvent}. Applies the pending arrival to the player; does
-     * nothing for players without one. Runs the position work on the entity's own scheduler.
+     * Called from {@code PlayerJoinEvent}. Attaches the sync wait; the placement work runs
+     * only once the external sync plugin confirms (or honestly reports nothing confirmed)
+     * the player's data, or — when the sync services are missing entirely — proceeds in
+     * degraded mode with a warning. Does nothing for players without one. Position work
+     * happens on the entity's own scheduler; the failure path never touches the entity.
      */
     public void onJoin(Player player, ArrivalWorldLookup worlds) {
         ArrivalCompletion completion = pending.get(player.getUniqueId());
         if (completion == null) {
             return;
         }
-        backend.schedulers().runOn(player, () -> {
-            ArrivalCompletion verified = verifyAndFix(completion, player, worlds);
-            backend.schedulers().runOnDelayed(player, () -> finalize(verified, player), COMPLETE_EVENT_DELAY_TICKS);
+        UUID playerUuid = player.getUniqueId();
+        SyncOperations sync = resolveSyncOperations();
+        if (sync == null) {
+            // level-D semantics: no gate available — proceed unconfirmed, warn loudly, never crash
+            backend.warn().accept("sync: sync services unavailable for player " + playerUuid
+                    + " (plugin disabled or boot failed); proceeding WITHOUT sync confirmation for operation "
+                    + completion.operationId() + " in degraded mode. Install HuskSync on every backend, "
+                    + "or set sync.plugin=reflection with sync.reflection.event-class, to close this gap.");
+            TaskHandle handle = backend.schedulers().runOn(player,
+                    () -> finishAfterSync(player, completion, worlds,
+                    new SyncReport("unavailable", 0L, true)));
+            if (handle == null) {
+                failAfterSync(player, completion,
+                        new SyncTimeoutException(playerUuid, TimeoutReason.PLAYER_OFFLINE));
+            }
+            return;
+        }
+        CompletableFuture<SyncReport> future;
+        try {
+            future = sync.awaitSync(player);
+        } catch (RuntimeException | LinkageError error) {
+            backend.severe().accept("sync: awaitSync threw for player " + playerUuid + " (op "
+                    + completion.operationId() + "): " + error);
+            failAfterSync(player, completion,
+                    new SyncTimeoutException(playerUuid, TimeoutReason.INTEGRATION_ERROR));
+            return;
+        }
+        future.whenComplete((report, error) -> {
+            if (error != null) {
+                failAfterSync(player, completion, error);
+                return;
+            }
+            TaskHandle handle = backend.schedulers().runOn(player,
+                    () -> finishAfterSync(player, completion, worlds, report));
+            if (handle == null) {
+                // the entity retired the exact moment sync completed — nothing to move
+                failAfterSync(player, completion,
+                        new SyncTimeoutException(playerUuid, TimeoutReason.PLAYER_OFFLINE));
+            }
         });
+    }
+
+    private @Nullable SyncOperations resolveSyncOperations() {
+        try {
+            return syncLookup.lookup();
+        } catch (RuntimeException | LinkageError error) {
+            backend.warn().accept("sync: the sync services lookup failed (" + error
+                    + "); the arrival proceeds in degraded mode");
+            return null;
+        }
+    }
+
+    /**
+     * Placement work after a normally-completed sync wait. The {@code degraded} flag on a
+     * normal completion never blocks the arrival (per the SyncReport contract) — a
+     * degraded report means "nothing about the data was confirmed", not "the player's
+     * data is corrupt"; it is logged, never fatal. The journal row has no notes/warn
+     * column, so the flag is log-only.
+     */
+    private void finishAfterSync(Player player, ArrivalCompletion completion,
+                                 ArrivalWorldLookup worlds, SyncReport report) {
+        if (report.degraded()) {
+            backend.diagnostics().accept("sync: player " + player.getUniqueId() + " proceeding unconfirmed "
+                    + "(strategy=" + report.strategy() + ", degraded=true, took=" + report.durationMillis()
+                    + " ms, op " + completion.operationId() + "); transfer proceeds — sync confirmation unavailable");
+        }
+        ArrivalCompletion verified = verifyAndFix(completion, player, worlds);
+        backend.schedulers().runOnDelayed(player, () -> finalize(verified, player), COMPLETE_EVENT_DELAY_TICKS);
+    }
+
+    /**
+     * Terminal failure path for a failed sync wait. The player is NOT moved; the row is
+     * terminally failed exactly once (CAS discipline — the party that flips the row owns
+     * the dispatch); {@code DimensionTransferCompleteEvent} is never dispatched for this
+     * operation. {@code phase} on the failed event is the state the failure was detected
+     * in — never a terminal state. The event fires even when the player already left,
+     * with {@code playerOnline=false} (the api contract requires the entity reference;
+     * a stale reference is acceptable).
+     */
+    private void failAfterSync(Player player, ArrivalCompletion completion, Throwable rawError) {
+        UUID opId = completion.operationId();
+        UUID playerUuid = player.getUniqueId();
+        Throwable cause = unwrap(rawError);
+        boolean playerOnline = safeIsOnline(player) && !isOfflineReason(cause);
+        TransferError error = mapSyncError(cause);
+        String reason = cause.getMessage() != null ? cause.getMessage() : cause.toString();
+
+        TransferOperation op;
+        try {
+            op = backend.journal().findById(opId).orElse(null);
+        } catch (RuntimeException e) {
+            pending.remove(playerUuid, completion);
+            backend.severe().accept("sync failed for player " + playerUuid + " (op " + opId + "): " + reason
+                    + " — journal unreadable, operation left non-terminal (claim watchdog will reconcile)");
+            return;
+        }
+        if (op == null || op.state().isTerminal()) {
+            pending.remove(playerUuid, completion);
+            backend.diagnostics().accept("operation " + opId + " already terminal at sync failure; FailedEvent skipped");
+            return;
+        }
+        String message = truncate(reason, 500);
+        TransferOperation failed = op.withState(OperationState.FAILED, Instant.now(clock), error, message);
+        if (!backend.journal().compareAndSetState(opId, op.state(), failed)) {
+            pending.remove(playerUuid, completion);
+            backend.diagnostics().accept("operation " + opId + " advanced concurrently at sync failure; FailedEvent skipped");
+            return;
+        }
+        OperationState phase = op.state();
+        pending.remove(playerUuid, completion);
+        backend.severe().accept("sync failed for player " + playerUuid + " (op " + opId + ", error="
+                + error.wireName() + ", phase=" + phase.wireName() + "): " + message);
+        boolean online = playerOnline;
+        backend.schedulers().runGlobal(() -> backend.events().fireFailed(opId, player,
+                op.sourceDimension(), op.targetDimension(), op.cause(), error, phase, online));
+    }
+
+    /** Unwraps {@link CompletionException}/{@link ExecutionException} nesting around the real cause. */
+    private static Throwable unwrap(Throwable raw) {
+        Throwable current = raw;
+        while ((current instanceof CompletionException || current instanceof ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    /**
+     * Error mapping for the failure matrix: sync timeout means {@link TransferError#TIMEOUT};
+     * player left mid-wait means {@link TransferError#DISCONNECTED}; a broken integration
+     * gate means {@link TransferError#UNAVAILABLE}; anything else is {@link TransferError#UNKNOWN}.
+     */
+    private static TransferError mapSyncError(Throwable cause) {
+        if (cause instanceof SyncTimeoutException timeout) {
+            return switch (timeout.reason()) {
+                case WAIT_TIMEOUT -> TransferError.TIMEOUT;
+                case PLAYER_OFFLINE -> TransferError.DISCONNECTED;
+                case INTEGRATION_ERROR -> TransferError.UNAVAILABLE;
+            };
+        }
+        return TransferError.UNKNOWN;
+    }
+
+    private static boolean isOfflineReason(Throwable cause) {
+        return cause instanceof SyncTimeoutException timeout && timeout.reason() == TimeoutReason.PLAYER_OFFLINE;
+    }
+
+    private static boolean safeIsOnline(Player player) {
+        try {
+            return player.isOnline();
+        } catch (RuntimeException | LinkageError error) {
+            // a reference we cannot probe is not an online reference
+            return false;
+        }
+    }
+
+    private static String truncate(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
     }
 
     /** Package-visible for tests: teleport fallback logic without the join event. */

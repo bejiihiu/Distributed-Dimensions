@@ -22,14 +22,14 @@ The support policy names four levels. Plain-English meaning, and the current pos
 
 | Level | Meaning | Current position |
 |---|---|---|
-| **1 — Player-compatible** | Players move between backends; portals work; coordinates and player state carry over | **Partially.** End portals work cross-server in code (entry + exit, wired at boot). The Nether portal flow (search/creation/arrival) is **not wired** — the algorithms exist in `common` and are unit-tested, but no portal listener calls them. Player coordinates/state travel via the external sync plugin — and the arrival flow **does not yet await it** (see below). |
+| **1 — Player-compatible** | Players move between backends; portals work; coordinates and player state carry over | **Partially.** End portals work cross-server in code (entry + exit, wired at boot). The Nether portal flow (search/creation/arrival) is **not wired** — the algorithms exist in `common` and are unit-tested, but no portal listener calls them. Player coordinates/state travel via the external sync plugin — and since this build the arrival flow **awaits it** (`SyncOperations.awaitSync`, bounded by `sync.wait-timeout`) before moving the player or firing the complete event (see below). |
 | **2 — World-mechanics-compatible** | Portals, search, creation, End, Gateways, Dragon Fight per the targeted Java Edition | **Partially, End only.** The End backend runs native mechanics (dragon, crystals, exit portal, gateways, outer islands) with zero interception — that half is a real End. Cross-server Nether portals and end gateways landing cross-server are out. |
 | **3 — Entity-compatible** | Mobs, items, vehicles, passengers cross backends | **Not shipped.** Wire protocol + journal states exist; the proxy rejects `entity_transfer`; no backend orchestrator exists. `entities.cross-server-transfer.enabled` defaults `false` and nothing in this build consumes it. Excluded forever by design: wither, ender dragon, heart-bound creaking. |
 | **4 — Vanilla parity** | All supported mechanics verified against a single server of the same version | **Not claimed, not achievable yet.** Calling this build Level 4 would be false advertising. |
 
 **The shape that is real today:** three backends + proxy; the End portal
 (Overworld → End and End → respawn point) is functional as code and covered by unit tests;
-the journal, proxy validation, arrival flow, mirage worlds, sync integration (bound, not
+the journal, proxy validation, arrival flow, mirage worlds, sync integration (bound and
 awaited) and the public API all exist. **Nothing has been proven against a live multi-JVM
 deployment of this stack — see "Untested in this environment".**
 
@@ -125,29 +125,30 @@ worlds per backend — that is the point, not a bug.
 - **One End backend per network.** Mirrored Ends are unsupported by design; each backend's
   dimension codec is correct natively and there is exactly one routing slot per dimension.
 
-## The sync gap (read this twice)
+## Player-data sync — awaited, and honest about what that proves (read this twice)
 
-The external sync integration is **code-complete and bound at boot**: `SyncServices` is
-registered in the ServicesManager, the strongest available strategy is picked (A HuskSync API
-→ B reflection → C blocking-login delay → D degraded), and `awaitSync(player)` is fully
-implemented and unit-tested.
-
-**The arrival flow never calls it.** `TransferArrivalService` goes
-`AsyncPlayerSpawnLocationEvent` → `PlayerJoinEvent` → two entity-scheduler ticks →
-`DimensionTransferCompleteEvent`. It does not await the sync plugin, does not check the
-applied state, and `DimensionTransferCompleteEvent` therefore fires ~2 ticks after join
-regardless of whether the player's inventory exists yet on the target.
+The external sync integration is code-complete, bound at boot, and **awaited by the arrival
+flow**: after `PlayerJoinEvent` the target resolves `SyncServices` and calls
+`SyncOperations.awaitSync(player)` (never joined); the teleport/verify, the chunk ticket,
+the journal `COMMITTED` transition and `DimensionTransferCompleteEvent` all happen only
+after the wait completes normally. See the arrival order in `docs/architecture-transfer.md`
+and the contract in `docs/player-sync.md`. On timeout or error the player is **not moved**:
+the journal row goes `FAILED` with the reason, a SEVERE line logs player uuid + reason, and
+`DimensionTransferFailedEvent` fires exactly once (with `playerOnline=false` if the player
+already left). If the sync services are entirely missing (plugin disabled or boot failed),
+the arrival proceeds in degraded mode with a warning — never a crash.
 
 Practical consequences:
 
-- Ordering guarantees elsewhere (`PlayerJoinEvent` → *sync* → `CompleteEvent`) describe the
-  design contract, **not this build**. Until the wiring lands, listeners that need
-  post-transfer settled state must wait on the sync plugin's own signals, not ours.
-- The degraded-mode "player sees a stale inventory" risk is real on networks without a
-  working sync plugin, and nothing in this build detects or heals it. Install HuskSync
-  (recommended) or accept the risk knowingly.
-- `sync.wait-for-sync: false` is a no-op today for the arrival path (there is no wait to
-  disable); the flag is wired for the future and logs a one-time warning when set to false.
+- Ordering guarantees elsewhere (`PlayerJoinEvent` → *sync* → `CompleteEvent`) are enforced
+  by this build: the complete event never fires before the sync wait settles normally.
+- A degraded "player sees a stale inventory" risk remains on networks without a working
+  sync plugin (level D is honest about knowing nothing), and on networks where HuskSync
+  silently fails to apply. Install HuskSync (recommended) or accept the risk knowingly.
+- A sync timeout fails the transfer loudly; the player keeps the provisional spawn
+  placement and the operation can be retried cleanly.
+- `sync.wait-for-sync: false` disables the wait (a one-time warning is logged, transfers
+  proceed unconfirmed) — trusted networks and tests only.
 - HuskSync must have **location sync disabled** (`synchronization.features.location: false`)
   on every backend, or the applied snapshot can overwrite our arrival coordinates after
   placement. This is off by default in HuskSync v4; turning it on silently breaks arrival
@@ -214,11 +215,12 @@ connections. None of this is implemented in this build:
 
 - **Arrival is a two-step**: `AsyncPlayerSpawnLocationEvent` (async claim + placement
   decision; registry-only world lookups — `Bukkit.getWorld`/`getRespawnWorld()` — never
-  block or entity access) → `PlayerJoinEvent` (entity thread: verify/teleport) →
-  **two entity-scheduler ticks** → journal commit + `CompleteEvent`. Expect the complete
-  event ~2 ticks after the join teleport settles.
-- **Sync wait, when wired, is bounded by `sync.wait-timeout` (default 5000 ms)** and never
-  blocks a game thread; nothing ever calls `join()` on it. Today it is 0 ms — see "The sync gap".
+  block or entity access) → `PlayerJoinEvent` (entity thread: sync wait,
+  verify/teleport) → **two entity-scheduler ticks** → journal commit + `CompleteEvent`.
+  Expect the complete event after the sync wait settles (normally ≤ `sync.wait-timeout`,
+  default 5000 ms) plus the placement window.
+- **Sync waits are bounded by `sync.wait-timeout` (default 5000 ms)** and never block a
+  game thread; nothing ever calls `join()` on them.
 - **Transfer path**: journal warm-pool insert sub-millisecond; watchdog at 2× the configured
   timeout (default 10000 ms → 20000 ms); claim watchdog on the target at the same 2×.
 - **Mirage memory**: one air-filled void chunk ≈ a few KB in memory, no region files ever.
@@ -304,7 +306,9 @@ up, and keep the previous jar.
   and nowhere else.
 - The shared database is mandatory. Without it the End exit portal is a world-spawn delivery
   mechanism and the journal — the exactly-once arbiter — does not exist.
-- Player-data sync is outsourced and, as of this build, not awaited by the arrival flow.
+- Player-data sync is outsourced, and the arrival flow awaits it (bounded by
+  `sync.wait-timeout`) before moving or completing the transfer — but only the sync
+  plugin can prove what actually landed.
 - Entity transfers don't exist. Nether cross-server portals don't exist. Vanilla parity is a
   direction, not a claim.
 - If someone tells you this build is "vanilla parity at level 4", they have not read this
