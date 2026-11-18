@@ -194,9 +194,8 @@ class EndPortalListenerTest {
                 cfg.configVersion(), cfg.general(), cfg.network(),
                 new kz.bejiihiu.dimensions.common.config.PortalsSettings(
                         cfg.portals().nether(),
-                        new kz.bejiihiu.dimensions.common.config.EndPortalsSettings(false),
-                        cfg.portals().gateway()),
-                cfg.entities(), cfg.api(), cfg.sync(), cfg.redis(), cfg.database(), cfg.debug(), cfg.mirage());
+                        new kz.bejiihiu.dimensions.common.config.EndPortalsSettings(false)),
+                cfg.entities(), cfg.api(), cfg.sync(), cfg.database(), cfg.mirage());
         FakeTransferBackend disabledBackend = new FakeTransferBackend(disabled);
         PortalTransferService disabledService =
                 new PortalTransferService(disabledBackend, java.time.Clock.fixed(T0, java.time.ZoneOffset.UTC));

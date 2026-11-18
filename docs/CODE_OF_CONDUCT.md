@@ -1,18 +1,18 @@
 # Code of Conduct
 
-## Наш стандарт
+## Our standard
 
-Участвуя в проекте, мы обязуемся вести себя уважительно: без оскорблений,
-троллинга и перехода на личности. Критикуем код, а не людей.
+By participating in this project, we commit to behaving respectfully: no insults,
+trolling, or personal attacks. We criticize code, not people.
 
-## Что неприемлемо
+## Unacceptable behavior
 
-Оскорбления, харассмент, публикация чужих личных данных, любое поведение,
-которое разумный человек сочтёт неуместным в профессиональном окружении.
+Insults, harassment, publishing someone else's personal data, or any behavior that
+a reasonable person would consider inappropriate in a professional setting.
 
-## Применение
+## Enforcement
 
-О нарушениях сообщай мейнтейнеру через Issues. Мейнтейнер вправе удалить
-комментарий, закрыть тред или заблокировать участника.
+Report violations to the maintainer through Issues. The maintainer may delete a
+comment, close a thread, or block a participant.
 
-Пользуемся здравым смыслом. Это шаблон плагина, а не парламент.
+Use common sense. This is a plugin template, not a parliament.

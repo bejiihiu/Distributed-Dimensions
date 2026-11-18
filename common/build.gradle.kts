@@ -3,23 +3,19 @@ repositories {
 }
 
 dependencies {
-    // Adventure идёт через api: типы Component торчат в публичных сигнатурах.
-    // В рантайме его дают сами платформы, из shade-бандлов группа net.kyori вырезается.
+    // Adventure goes through api: Component types leak into public signatures.
+    // At runtime the platforms provide it; net.kyori is cut from the shade bundles.
     api(libs.adventure.api)
     api(libs.adventure.minimessage)
 
-    // Cloud-ядро идёт через api: платформенные менеджеры команд построены на нём.
-    // Релокация в shade переписывает и наши ссылки тоже, так что рассинхрона не будет.
-    api(libs.cloud.core)
-
-    // Configurate бандлится в каждый платформенный jar с релокацией, транзитивно тянет snakeyaml.
+    // Configurate is bundled into each platform jar with relocation, transitively pulls snakeyaml.
     implementation(libs.configurate.yaml)
 
-    // Wire-протокол: gson везде одинаковый, релоцируется вместе со сборкой platform-jar'ов.
+    // Wire protocol: gson everywhere, relocated along with the platform jars.
     implementation(libs.gson)
 
-    // Персистентность: HikariCP + JDBC-драйвера (mysql/mariadb/postgres) + sync mongo driver.
-    // Всё это implementation: драйвера тащим внутрь jar'ов, админу ничего доносить не надо.
+    // Persistence: HikariCP + JDBC drivers (mysql/mariadb/postgres) + the sync mongo driver.
+    // All implementation: the drivers are bundled inside the jars, the admin must not carry extra files.
     implementation(libs.hikaricp)
     implementation(libs.mongodb.driver.sync)
     implementation(libs.mysql.connector)
@@ -31,8 +27,8 @@ dependencies {
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
-    // Лаунчер нужен Gradle раннеру, сам junit-jupiter его не тянет.
+    // The launcher is needed by the Gradle runner; junit-jupiter does not pull it in.
     testRuntimeOnly(libs.junit.launcher)
-    // H2 только для тестов: выполнение SQL (PostgreSQL-совместимый режим) — не про диалекты.
+    // H2 for tests only: SQL execution (PostgreSQL-compatible mode) — not about dialects.
     testImplementation(libs.h2)
 }

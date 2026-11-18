@@ -169,13 +169,13 @@ list three worlds per backend — that is the point, not a bug.
   design** — native to the End backend, zero interception, no plugin code, no plugin tests.
   Compatibility verification for those mechanics is left to the admin test loop
   (`docs/installation.md` checklist), exactly as you would verify any vanilla End server.
-- **Config keys with no consumer in this build.** `general.strict-vanilla-mode`,
-  `portals.nether.preserve-vanilla-delay` / `-search` / `-creation` / `-orientation`, and
-  `network.transfer.max-retries` are parsed and documented but nothing branches on them
-  (the vanilla gamerules are the supported lever for the dwell; the search/creation **is**
-  the vanilla algorithm). `portals.gateway.enabled`, `network.proxy.enabled` and the four
-  `debug.*` flags are likewise inert. A separate cleanup branch is handling this under
-  review — until it lands, treat all of these as having no effect. See
+- **Fictional config keys removed in v4.** `general.strict-vanilla-mode`,
+  `portals.nether.preserve-vanilla-delay` / `-search` / `-creation` / `-orientation`,
+  `network.transfer.max-retries`, `network.proxy.enabled`, `portals.gateway.enabled`,
+  the four `debug.*` flags and the whole `redis.*` section were parsed but nothing ever
+  branched on them; schema version 4 (config-version 4) deletes them, and the v3 → v4
+  migration drops them from existing files. The vanilla gamerules remain the supported
+  lever for the dwell; the search/creation **is** the vanilla algorithm. See
   `docs/configuration.md`.
 
 ## Player-data sync — awaited, and honest about what that proves (read this twice)

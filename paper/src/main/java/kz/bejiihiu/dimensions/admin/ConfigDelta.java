@@ -75,14 +75,8 @@ public final class ConfigDelta {
         if (!running.sync().equals(reloaded.sync())) {
             changed.add("sync");
         }
-        if (!running.redis().equals(reloaded.redis())) {
-            changed.add("redis");
-        }
         if (!running.database().equals(reloaded.database())) {
             changed.add("database");
-        }
-        if (!running.debug().equals(reloaded.debug())) {
-            changed.add("debug");
         }
         if (!running.mirage().equals(reloaded.mirage())) {
             changed.add("mirage");

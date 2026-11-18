@@ -7,14 +7,9 @@ The same bundled defaults ship in `common/src/main/resources/config.yml`.
 
 Status legend used below: **active** = read by code that exists today; **consumed-by-design** =
 the key is a frozen contract for a feature landing in a later phase — removing or renaming it
-is a breaking schema change. **No consumer — under review** = the key parses and ships, but
-nothing on either platform branches on it; a separate cleanup branch is handling those (see
-`docs/limitations.md`). Every key in the shipped defaults is one of the three; nothing is
-decorative. As of this build the no-consumer set is: `general.strict-vanilla-mode`,
-`network.proxy.enabled`, `network.transfer.max-retries`,
-`portals.nether.preserve-vanilla-delay` / `-search` / `-creation` / `-orientation`,
-`portals.gateway.enabled`, and the four `debug.*` flags — do not rely on any of them having
-an effect until that branch lands.
+is a breaking schema change. Every key in the shipped defaults is one of the two; nothing is
+decorative. The fiction keys that earlier builds shipped as "under review" were removed in
+schema version 4 — see `docs/limitations.md`.
 
 ## Boot semantics
 
@@ -59,8 +54,9 @@ and no `${VAR}` expansion is applied to it. Real deployments should use
 
 ## `config-version` and schema evolution
 
-Integer key, top level. `3` is the current schema (v1 → v2 added the `sync.*`
-integration keys; v2 → v3 added `network.source-server`). A file without the key
+Integer key, top level. `4` is the current schema (v1 → v2 added the `sync.*`
+integration keys; v2 → v3 added `network.source-server`; v3 → v4 dropped the fiction
+keys that nothing branched on). A file without the key
 is treated as `0` and brought forward by the migration framework. Migrations are
 class-based (`ConfigMigration`, one per version step), applied strictly in order;
 a registered gap in the chain is a hard error. After a successful migration the
@@ -72,11 +68,8 @@ file is saved back atomically with `config-version` stamped. Never edit
 | Key | Type | Default | Platform | Purpose / status |
 | --- | --- | --- | --- | --- |
 | `general.language` | string (`en`/`ru`) | `en` | both | Message language for user-facing plugin text. Active (admin messages `/dd`, reload notes). |
-| `general.strict-vanilla-mode` | boolean | `true` | both | Restrict the plugin to assisting the vanilla flow. No consumer — under review; nothing branches on it. |
-| `network.proxy.enabled` | boolean | `true` | both | Proxy-mode participation. No consumer — under review; the proxy does not read it, the backend keeps no branch on it. |
 | `network.source-server` | string, `[A-Za-z0-9_-]{1,64}` or `""` | `""` | both | This backend's own registered server name in the proxy. Read by the interop transfer path (mirage guard / programmatic API) — the portal/end flows derive the source claim from the `network.dimensions` table instead. Blank = unset: that path fails closed with `UNAVAILABLE`; `DD_SOURCE_SERVER` env var and `-Ddimensions.source-server` sysprop are consulted instead (config wins when set). Active. |
 | `network.transfer.timeout` | int (milliseconds) | `10000` | both | Transfer attempt timeout; > 0. Read by both platforms (source watchdogs, target claim watchdog, interop path). Active. |
-| `network.transfer.max-retries` | int | `2` | both | Transfer retries before giving up; ≥ 0. No consumer — under review; retries are not implemented anywhere. |
 | `network.dimensions.overworld.server` | string | `overworld` | both | Proxy server holding the overworld dimension. Grammar `[A-Za-z0-9_-]{1,64}`. Active (routing table, proxy validation, `/dd info`). |
 | `network.dimensions.overworld.dimension` | string | `minecraft:overworld` | both | Dimension id on that server. Namespaced id. Active. |
 | `network.dimensions.nether.server` | string | `nether` | both | Same for the nether. Active. |
@@ -84,12 +77,7 @@ file is saved back atomically with `config-version` stamped. Never edit
 | `network.dimensions.end.server` | string | `end` | both | Same for the end. Active. |
 | `network.dimensions.end.dimension` | string | `minecraft:the_end` | both | Active. |
 | `portals.nether.enabled` | boolean | `true` | paper | Nether portal handling. Active. |
-| `portals.nether.preserve-vanilla-delay` | boolean | `true` | paper | Keep the vanilla entry delay. No effect — under review; the dwell is vanilla's and the gamerules are the supported lever. |
-| `portals.nether.preserve-vanilla-search` | boolean | `true` | paper | Keep the vanilla portal-search behavior. No effect — under review; the search **is** the vanilla algorithm. |
-| `portals.nether.preserve-vanilla-creation` | boolean | `true` | paper | Keep vanilla portal creation in the target world. No effect — under review; creation is the vanilla algorithm. |
-| `portals.nether.preserve-vanilla-orientation` | boolean | `true` | paper | Keep axis orientation of created portals. No effect — under review; created portals use the source default axis until the wire can carry orientation (protocol v1 frozen). |
 | `portals.end.enabled` | boolean | `true` | paper | End portal handling. Active. |
-| `portals.gateway.enabled` | boolean | `true` | paper | End gateway handling (outer islands). No consumer — under review; gateway mechanics are native to the End backend and nothing in this build acts on it. |
 | `entities.cross-server-transfer.enabled` | boolean | `false` | paper | Master switch for entity transfer. Active (read at portal intercept). |
 | `entities.cross-server-transfer.players` | boolean | `true` | paper | Players may travel cross-server. |
 | `entities.cross-server-transfer.mobs` | boolean | `false` | paper | Mobs may travel cross-server. |
@@ -108,7 +96,6 @@ file is saved back atomically with `config-version` stamped. Never edit
 | `sync.wait-ticks` | int >= 0 | `20` | paper | Fixed delay for the delay-based strategies; capped at `sync.wait-timeout`. Active. |
 | `sync.reflection.event-class` | string (FQCN) or `""` | `""` | paper | Event class for the reflection strategy; must extend `org.bukkit.event.Event`. Active. |
 | `sync.reflection.getter` | string (method name) | `getPlayer` | paper | No-arg getter on the event returning a Player, a UUID, or an object with `getUuid()`. Active. |
-| `redis.enabled` | boolean | `false` | both | Redis availability hint. **Reserved** — no consumer reads it yet; enables nothing today. |
 | `database.type` | enum (`mysql`/`mariadb`/`postgresql`/`mongodb`) | `mysql` | paper | Engine. `${VAR}`-free literal. Active. |
 | `database.jdbc-url` | string | `jdbc:mysql://localhost:3306/distributed_dimensions` | paper | JDBC URL (SQL types). `${VAR}` expanded at load. Active. |
 | `database.username` | string | `distributed_dimensions` | paper | SQL user. `${VAR}` expanded at load. Active. |
@@ -119,17 +106,13 @@ file is saved back atomically with `config-version` stamped. Never edit
 | `database.minimum-idle` | int in `[0, maximum-pool-size]` | `2` | paper | Hikari `minimumIdle` / MongoDB pool min. Active. |
 | `database.connection-timeout` | int (milliseconds) > 0 | `5000` | paper | Connection acquisition timeout. Active. |
 | `database.table-prefix` | string, `[a-z][a-z0-9_]{0,30}` + optional `_` | `dd_` | paper | Identifier prefix for all plugin tables/collections. Active. |
-| `debug.portal-search` | boolean | `false` | both | Verbose portal-search logging. No consumer — under review. |
-| `debug.coordinate-conversion` | boolean | `false` | both | Verbose coordinate-conversion logging. No consumer — under review. |
-| `debug.transfers` | boolean | `false` | both | Verbose transfer-flow logging. No consumer — under review. |
-| `debug.entity-transfer` | boolean | `false` | both | Verbose entity-transfer logging. No consumer — under review. |
 | `mirage.enabled` | boolean | `true` | paper | Mirage (void) worlds for foreign dimensions. Active. |
 | `mirage.names.overworld` | string | `world` | paper | Mirage world name for the overworld slot; Bukkit level-name convention. Active. |
 | `mirage.names.nether` | string | `world_nether` | paper | Mirage world name for the nether slot. Active. |
 | `mirage.names.end` | string | `world_the_end` | paper | Mirage world name for the end slot. Active. |
 | `mirage.block-edits` | enum (`cancel`) | `cancel` | paper | Guard behavior for edits inside mirage worlds. Only `cancel` is supported; the guard always cancels with a rate-limited hint — the key is validated, not consulted. Kept for schema compatibility. |
 | `mirage.fixed-time` | int in `[0, 24000]` | `6000` | paper | Gamerule time pinned in mirage worlds (noon). Active. |
-| `config-version` | int >= 1 | `3` | both | Schema version; drives the migration framework. Active. |
+| `config-version` | int >= 1 | `4` | both | Schema version; drives the migration framework. Active. |
 
 ## Platform applicability notes
 
@@ -148,8 +131,6 @@ file is saved back atomically with `config-version` stamped. Never edit
   programmatic API). The portal/end flows derive the source claim from the
   `network.dimensions` table, so a backend with `source-server: ""` still runs portals —
   only the mirage/programmatic routes fail closed.
-- `redis.enabled` is reserved for cross-server messaging transport; enabling it does
-  nothing yet and is kept only to avoid a schema bump when the transport lands.
 
 ## Minimal shape
 
@@ -161,9 +142,7 @@ network:
     nether:
       server: "nether"
       dimension: "minecraft:the_nether"
-  proxy:
-    enabled: true
-config-version: 3
+config-version: 4
 ```
 
 Anything omitted is healed from the bundled defaults at load time; the file on disk is

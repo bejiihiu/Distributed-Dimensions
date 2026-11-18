@@ -120,14 +120,11 @@ final class ConfigLoader {
     private static PluginConfig materialize(CommentedConfigurationNode root, EnvLookup env) {
         try {
             GeneralSettings general = new GeneralSettings(
-                    Nodes.string(root, "general", "language"),
-                    Nodes.bool(root, "general", "strict-vanilla-mode"));
+                    Nodes.string(root, "general", "language"));
 
             NetworkSettings network = new NetworkSettings(
-                    new NetworkProxySettings(Nodes.bool(root, "network", "proxy", "enabled")),
                     new TransferSettings(
-                            Duration.ofMillis(Nodes.longValue(root, "network", "transfer", "timeout")),
-                            Nodes.intValue(root, "network", "transfer", "max-retries")),
+                            Duration.ofMillis(Nodes.longValue(root, "network", "transfer", "timeout"))),
                     new DimensionsSettings(
                             dimensionTarget(root, "overworld"),
                             dimensionTarget(root, "nether"),
@@ -136,13 +133,8 @@ final class ConfigLoader {
 
             PortalsSettings portals = new PortalsSettings(
                     new NetherPortalsSettings(
-                            Nodes.bool(root, "portals", "nether", "enabled"),
-                            Nodes.bool(root, "portals", "nether", "preserve-vanilla-delay"),
-                            Nodes.bool(root, "portals", "nether", "preserve-vanilla-search"),
-                            Nodes.bool(root, "portals", "nether", "preserve-vanilla-creation"),
-                            Nodes.bool(root, "portals", "nether", "preserve-vanilla-orientation")),
-                    new EndPortalsSettings(Nodes.bool(root, "portals", "end", "enabled")),
-                    new GatewayPortalsSettings(Nodes.bool(root, "portals", "gateway", "enabled")));
+                            Nodes.bool(root, "portals", "nether", "enabled")),
+                    new EndPortalsSettings(Nodes.bool(root, "portals", "end", "enabled")));
 
             EntitiesSettings entities = new EntitiesSettings(
                     new CrossServerTransferSettings(
@@ -171,15 +163,7 @@ final class ConfigLoader {
                     Nodes.string(root, "sync", "reflection", "event-class"),
                     Nodes.string(root, "sync", "reflection", "getter"));
 
-            RedisSettings redis = new RedisSettings(Nodes.bool(root, "redis", "enabled"));
-
             DatabaseSettings database = database(root, env);
-
-            DebugSettings debug = new DebugSettings(
-                    Nodes.bool(root, "debug", "portal-search"),
-                    Nodes.bool(root, "debug", "coordinate-conversion"),
-                    Nodes.bool(root, "debug", "transfers"),
-                    Nodes.bool(root, "debug", "entity-transfer"));
 
             MirageBlockEdits blockEdits;
             try {
@@ -197,7 +181,7 @@ final class ConfigLoader {
                     Nodes.longValue(root, "mirage", "fixed-time"));
 
             return new PluginConfig(ConfigMigrations.CURRENT_VERSION, general, network, portals,
-                    entities, api, sync, redis, database, debug, mirage);
+                    entities, api, sync, database, mirage);
         } catch (IllegalArgumentException e) {
             // record constructors validate; re-tag as a config failure with everything we know
             throw new ConfigurationException(e.getMessage(), e);

@@ -57,17 +57,16 @@ class ConfigurationServiceTest {
 
     @Test
     void partialFileHealsMissingKeysFromDefaultsWithoutRewritingFile() throws Exception {
-        String partial = "config-version: 3\ngeneral:\n  language: \"ru\"\n";
+        String partial = "config-version: 4\ngeneral:\n  language: \"ru\"\n";
         write(partial);
         ConfigurationService service = newService();
 
         PluginConfig config = service.load();
 
         assertEquals("ru", config.general().language(), "user value must win");
-        assertTrue(config.general().strictVanillaMode(), "missing key must be healed from defaults");
         assertEquals("nether", config.network().dimensions().nether().server());
         assertEquals(partial, Files.readString(configPath(), StandardCharsets.UTF_8),
-                "healing a v3 file must not rewrite it");
+                "healing a v4 file must not rewrite it");
         assertTrue(service.health().isEmpty());
         assertEquals(List.of(), service.report().warnings());
     }
@@ -128,12 +127,12 @@ class ConfigurationServiceTest {
 
     @Test
     void scalarWhereDefaultsHaveSectionBreaksTheConfig() throws Exception {
-        write("debug: true\n");
+        write("portals: true\n");
         ConfigurationService service = newService();
 
         assertEquals("en", service.load().general().language());
         assertTrue(service.health().isPresent());
-        assertTrue(service.health().get().getMessage().contains("debug"));
+        assertTrue(service.health().get().getMessage().contains("portals"));
     }
 
     @Test
@@ -182,15 +181,16 @@ class ConfigurationServiceTest {
 
         assertEquals(ConfigMigrations.CURRENT_VERSION, config.configVersion());
         assertEquals("ru", config.general().language());
-        assertTrue(config.redis().enabled(), "user values must survive the migration");
         assertEquals(0, service.report().migratedFrom());
-        assertEquals(3, service.report().migratedTo());
+        assertEquals(4, service.report().migratedTo());
         assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 0")));
         assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 1")));
         assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 2")));
+        assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 3")));
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
-        assertTrue(saved.contains("config-version: 3"), "migrated file must be saved back");
+        assertTrue(saved.contains("config-version: 4"), "migrated file must be saved back");
         assertFalse(saved.contains("debug: true"), "legacy general.debug must be dropped by the migration");
+        assertFalse(saved.contains("redis"), "fiction redis section must be dropped by the v4 migration");
     }
 
     @Test
@@ -201,9 +201,8 @@ class ConfigurationServiceTest {
 
         PluginConfig config = service.load();
 
-        assertEquals(3, config.configVersion());
+        assertEquals(4, config.configVersion());
         assertEquals("delayed", config.sync().plugin(), "user values must survive the migration");
-        assertTrue(config.redis().enabled(), "user values must survive the migration");
         assertEquals(Duration.ofMillis(5_000), config.sync().waitTimeout(),
                 "new key must be healed from defaults");
         assertEquals(20, config.sync().waitTicks());
@@ -211,10 +210,11 @@ class ConfigurationServiceTest {
         assertEquals("getPlayer", config.sync().reflectionGetter());
         assertEquals("", config.network().sourceServer(), "v2 file has no source-server — healed to the default");
         assertEquals(1, service.report().migratedFrom());
-        assertEquals(3, service.report().migratedTo());
+        assertEquals(4, service.report().migratedTo());
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
-        assertTrue(saved.contains("config-version: 3"), "migrated file must be saved back");
+        assertTrue(saved.contains("config-version: 4"), "migrated file must be saved back");
         assertTrue(saved.contains("wait-timeout"), "healed key must be persisted");
+        assertFalse(saved.contains("redis"), "fiction redis section must be dropped by the v4 migration");
     }
 
     @Test
@@ -229,14 +229,14 @@ class ConfigurationServiceTest {
 
         PluginConfig config = service.load();
 
-        assertEquals(3, config.configVersion());
+        assertEquals(4, config.configVersion());
         assertEquals("", config.network().sourceServer(), "new key must be healed from defaults");
-        assertTrue(config.redis().enabled(), "user values must survive the migration");
         assertEquals(2, service.report().migratedFrom());
-        assertEquals(3, service.report().migratedTo());
+        assertEquals(4, service.report().migratedTo());
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
-        assertTrue(saved.contains("config-version: 3"), "migrated file must be saved back");
+        assertTrue(saved.contains("config-version: 4"), "migrated file must be saved back");
         assertTrue(saved.contains("source-server"), "healed key must be persisted");
+        assertFalse(saved.contains("redis"), "fiction redis section must be dropped by the v4 migration");
     }
 
     @Test
@@ -250,7 +250,7 @@ class ConfigurationServiceTest {
 
         PluginConfig config = service.load();
 
-        assertEquals(3, config.configVersion());
+        assertEquals(4, config.configVersion());
         assertEquals("nether-backend", config.network().sourceServer(),
                 "an explicitly configured source-server must survive the migration untouched");
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
@@ -258,11 +258,60 @@ class ConfigurationServiceTest {
     }
 
     @Test
-    void defaultsRoundTripCarriesV3Defaults() {
+    void migrationV3ToV4DropsFictionalKeysAndSavesBack() throws Exception {
+        // a genuine v3 file carrying every fiction key plus values worth keeping
+        write("""
+                config-version: 3
+                general:
+                  language: "ru"
+                  strict-vanilla-mode: true
+                network:
+                  proxy:
+                    enabled: true
+                  transfer:
+                    timeout: 7000
+                    max-retries: 5
+                portals:
+                  nether:
+                    enabled: true
+                    preserve-vanilla-delay: false
+                    preserve-vanilla-search: true
+                    preserve-vanilla-creation: true
+                    preserve-vanilla-orientation: true
+                  gateway:
+                    enabled: true
+                debug:
+                  transfers: true
+                redis:
+                  enabled: true
+                """);
+        ConfigurationService service = newService();
+
+        PluginConfig config = service.load();
+
+        assertEquals(4, config.configVersion());
+        assertEquals("ru", config.general().language());
+        assertEquals(Duration.ofMillis(7_000), config.network().transfer().timeout(),
+                "kept values must survive the migration");
+        assertEquals(3, service.report().migratedFrom());
+        assertEquals(4, service.report().migratedTo());
+        String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
+        assertTrue(saved.contains("config-version: 4"), "migrated file must be saved back");
+        for (String dropped : List.of("strict-vanilla-mode", "proxy", "max-retries",
+                "preserve-vanilla", "gateway", "debug", "redis")) {
+            assertFalse(saved.contains(dropped), "fiction key '" + dropped + "' must be dropped by the migration");
+        }
+        assertTrue(saved.contains("ru"), "kept values must survive the migration");
+        assertTrue(saved.contains("7000"), "kept values must survive the migration");
+        assertTrue(service.report().notes().stream().anyMatch(n -> n.contains("config-version 3")));
+    }
+
+    @Test
+    void defaultsRoundTripCarriesV4Defaults() {
         PluginConfig config = ConfigLoader.defaultsSnapshot(Environment.resolve(dir), ENV);
 
         assertEquals(ConfigMigrations.CURRENT_VERSION, config.configVersion());
-        assertEquals(3, config.configVersion());
+        assertEquals(4, config.configVersion());
         assertEquals("", config.network().sourceServer(), "bundled default must be the unset sentinel");
     }
 
@@ -288,7 +337,7 @@ class ConfigurationServiceTest {
 
     @Test
     void healOnlyLoadKeepsUserFileUntouchedEvenWithWarningsAndHealing() throws Exception {
-        String partial = "config-version: 3\nbogus:\n  key: 1\ngeneral:\n  language: \"ru\"\n";
+        String partial = "config-version: 4\nbogus:\n  key: 1\ngeneral:\n  language: \"ru\"\n";
         write(partial);
 
         newService().load();
@@ -311,7 +360,7 @@ class ConfigurationServiceTest {
     @Test
     void explicitEmptyPasswordSurvivesHealAndLoad() throws Exception {
         // a deliberate "no credentials" marker must not be healed back to the bundled ${DB_PASSWORD}
-        write("config-version: 3\ndatabase:\n  password: \"\"\n");
+        write("config-version: 4\ndatabase:\n  password: \"\"\n");
         ConfigurationService service = newService();
 
         PluginConfig config = service.load();
@@ -323,7 +372,7 @@ class ConfigurationServiceTest {
     @Test
     void explicitEmptyPasswordLoadsWithDatabasePasswordEnvUnset() throws Exception {
         // the bundled default references DB_PASSWORD; an explicit "" must bypass expansion entirely
-        write("config-version: 3\ndatabase:\n  password: \"\"\n");
+        write("config-version: 4\ndatabase:\n  password: \"\"\n");
         ConfigurationService service = new ConfigurationService(
                 Environment.resolve(dir), EnvLookup.fixed(Map.of()));
 
@@ -335,7 +384,7 @@ class ConfigurationServiceTest {
 
     @Test
     void missingPasswordKeyStillHealsToBundledDefault() throws Exception {
-        write("config-version: 3\ndatabase:\n  username: \"someone\"\n");
+        write("config-version: 4\ndatabase:\n  username: \"someone\"\n");
         ConfigurationService service = newService();
 
         PluginConfig config = service.load();
@@ -348,7 +397,7 @@ class ConfigurationServiceTest {
     @Test
     void healFromBundledDefaultsUnchangedForFreshBootStyleFiles() throws Exception {
         // a v3 file with no database section at all heals every key from the bundled defaults
-        write("config-version: 3\n");
+        write("config-version: 4\n");
         ConfigurationService service = newService();
 
         PluginConfig config = service.load();
@@ -362,7 +411,7 @@ class ConfigurationServiceTest {
     @Test
     void unsetEnvVarWithBundledDefaultPasswordStillHardFails() throws Exception {
         // env without DB_PASSWORD: the healed default cannot be expanded — fails as before
-        write("config-version: 3\n");
+        write("config-version: 4\n");
         ConfigurationService service = new ConfigurationService(
                 Environment.resolve(dir), EnvLookup.fixed(Map.of()));
 
@@ -381,7 +430,7 @@ class ConfigurationServiceTest {
         assertTrue(service.isHealthy());
         assertEquals("en", config.general().language());
         String saved = Files.readString(configPath(), StandardCharsets.UTF_8);
-        assertTrue(saved.contains("config-version: 3"), "empty file is a v0 file — the migration save brings it up");
+        assertTrue(saved.contains("config-version: 4"), "empty file is a v0 file — the migration save brings it up");
         assertTrue(saved.contains("mirage"), "saved file must carry the healed defaults");
     }
 

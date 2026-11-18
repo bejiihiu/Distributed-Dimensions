@@ -17,7 +17,14 @@ out/
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 
-# Локальные дев-сервера run-task (paper/velocity) и их данные
+# Eclipse metadata (local paths, IDE-only)
+.settings/
+.project
+
+# logs
+*.log
+
+# local dev servers from run-task (paper/velocity) and their data
 run/
 run-velocity/
 notes/

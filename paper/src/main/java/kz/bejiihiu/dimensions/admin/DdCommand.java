@@ -24,7 +24,7 @@ import java.util.Objects;
  * platform API offers {@link BasicCommand}: the Bukkit-style {@code execute} +
  * {@code suggest} + {@code canUse} shape without any external dependency and without
  * hand-rolling a Brigadier tree for three literal subcommands. Full Brigadier or a
- * Cloud framework would be ceremony here — and Cloud would be a bundled dependency
+ * A command framework would be ceremony here — and would be a bundled dependency
  * for no behavioral gain. Tab completion is the {@link #suggest} override below.
  *
  * <p><b>Permissions.</b> The single node {@value #PERMISSION} (default {@code op})

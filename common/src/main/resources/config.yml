@@ -9,10 +9,6 @@ general:
   # Message/localization language used by the plugin: "en" or "ru".
   language: "en"
 
-  # When true, no vanilla-incompatible behavior is applied: the plugin only
-  # assists the vanilla flow instead of replacing it.
-  strict-vanilla-mode: true
-
 network:
   # This backend's own registered server name in the proxy — the name Velocity
   # knows this server by. Required for cross-server transfer routing in
@@ -23,16 +19,9 @@ network:
   # system property) are consulted instead.
   source-server: ""
 
-  proxy:
-    # Proxy-mode availability: the backend advertises transfer targets and the
-    # proxy performs the actual player switch. False = backend-only deployments.
-    enabled: true
-
   transfer:
     # Milliseconds before a cross-server transfer is considered failed.
     timeout: 10000
-    # How many times a failed transfer is retried before giving up.
-    max-retries: 2
 
   dimensions:
     overworld:
@@ -50,16 +39,7 @@ portals:
   nether:
     enabled: true
 
-    # Keep the vanilla portal feel instead of replacing it with instant teleports.
-    preserve-vanilla-delay: true
-    preserve-vanilla-search: true
-    preserve-vanilla-creation: true
-    preserve-vanilla-orientation: true
-
   end:
-    enabled: true
-
-  gateway:
     enabled: true
 
 entities:
@@ -127,10 +107,6 @@ sync:
     # exposes getUuid()); plugins with getPlayer() returning a Player keep the default.
     getter: "getPlayer"
 
-redis:
-  # Not required, but recommended; the plugin works without it.
-  enabled: false
-
 database:
   # Engine: mysql | mariadb | postgresql | mongodb.
   # HikariCP for SQL; MongoDB uses the sync driver's built-in pool.
@@ -159,13 +135,6 @@ database:
   # Must match [a-z][a-z0-9_]{0,30} with an optional trailing underscore.
   table-prefix: "dd_"
 
-debug:
-  # Verbose logging for the individual subsystems; keep false in production.
-  portal-search: false
-  coordinate-conversion: false
-  transfers: false
-  entity-transfer: false
-
 mirage:
   # Mirage (void) dimensions local hints for the backend worlds that live on
   # other servers; see the design notes for how they are used.
@@ -187,4 +156,4 @@ mirage:
 
 # Internal schema version. Do not edit by hand; bumped by the migration
 # framework when the schema changes.
-config-version: 3
+config-version: 4

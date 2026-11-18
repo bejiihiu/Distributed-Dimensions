@@ -335,7 +335,6 @@ network:
 
 Notes:
 
-- `network.proxy.enabled` is a backend-advertised flag; the proxy does not read it.
 - The proxy does not need `database.*` for anything it does, but the loader still
   **expands `${VAR}` in `database.*` at load time** — see "Requirements" above and
   `docs/installation.md` §5. In short: make `DB_PASSWORD` resolvable or use a literal.

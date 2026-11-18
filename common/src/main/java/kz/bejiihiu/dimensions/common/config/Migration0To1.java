@@ -5,8 +5,8 @@ import org.spongepowered.configurate.CommentedConfigurationNode;
 /**
  * v0 → v1. The pre-versioning schema is the configuration sketch that shipped in the
  * design docs: it had no {@code config-version} and allowed a stray {@code general.debug}
- * boolean. v1 has neither — the {@code debug.*} section is the single source of truth for
- * verbose logging.
+ * boolean. v1 has neither — the top-level {@code debug.*} section carried the
+ * verbose-logging switches until v4 dropped them entirely.
  *
  * <p>Drops {@code general.debug} when present. Everything else v0 needed is supplied by
  * the standard heal-from-defaults step, so there is nothing else to rewrite. Idempotent.

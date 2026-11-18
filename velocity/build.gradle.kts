@@ -12,7 +12,6 @@ repositories {
 
 dependencies {
     implementation(project(":common"))
-    implementation(project(":api"))
     compileOnly(libs.velocity.api)
     annotationProcessor(libs.velocity.api)
     compileOnly(libs.annotations)
@@ -38,17 +37,28 @@ tasks {
     named<ShadowJar>("shadowJar") {
         archiveClassifier.set("")
         archiveBaseName.set("distributed-dimensions-velocity")
-        // Склеиваем META-INF/services всех либ (Configurate), иначе SPI провайдеры потеряются.
+        // Merge META-INF/services from all libs (Configurate), otherwise the SPI providers are lost.
         mergeServiceFiles()
-        // Без этого Shadow режет дубликаты service-файлов до того как их увидит
-        // трансформер (ворнинг при сборке) - провайдеры Configurate теряются.
-        // Фикс service file merging: дубликаты пропускаем внутрь, склейкой
-        // занимается сам трансформер.
+        // Without this Shadow cuts duplicate service files before the transformer
+        // sees them (build-time warning) - the Configurate providers are lost.
+        // Service file merging fix: duplicates go inside, the transformer does the merging.
         filesMatching("META-INF/services/**") {
             duplicatesStrategy = DuplicatesStrategy.INCLUDE
         }
 
-        // Всё своё тащим под своим пакетом, чтобы не конфликтовать с другими плагинами.
+        // Drop JDBC-driver root-level junk (mysql/mariadb connector metadata) - anchored root
+        // patterns only. admin/messages_*.properties, config.yml, our packages and
+        // META-INF/services stay untouched.
+        filesMatching("INFO_BIN") { exclude() }
+        filesMatching("INFO_SRC") { exclude() }
+        filesMatching("mariadb.properties") { exclude() }
+        filesMatching("deprecated.properties") { exclude() }
+        filesMatching("driver.properties") { exclude() }
+        filesMatching("CONTRIBUTING.md") { exclude() }
+        filesMatching("LICENSE") { exclude() }
+        filesMatching("README") { exclude() }
+
+        // Bundle everything of ours under our own package so it does not clash with other plugins.
         relocate("org.spongepowered.configurate", "kz.bejiihiu.dimensions.libs.configurate")
         relocate("org.yaml.snakeyaml", "kz.bejiihiu.dimensions.libs.snakeyaml")
         relocate("io.leangen.geantyref", "kz.bejiihiu.dimensions.libs.geantyref")
@@ -59,27 +69,25 @@ tasks {
         relocate("org.postgresql", "kz.bejiihiu.dimensions.libs.postgresql")
         relocate("com.mongodb", "kz.bejiihiu.dimensions.libs.mongodb")
         relocate("org.bson", "kz.bejiihiu.dimensions.libs.bson")
+        relocate("com.google.protobuf", "kz.bejiihiu.dimensions.libs.protobuf")
+        relocate("org.checkerframework", "kz.bejiihiu.dimensions.libs.checkerframework")
+        relocate("org.jspecify", "kz.bejiihiu.dimensions.libs.jspecify")
 
         dependencies {
-            // Даёт прокси (Velocity 4 везёт Adventure 5): Adventure, slf4j и аннотации в jar не кладём.
+            // Provided by the proxy (Velocity 4 ships Adventure 5): cut Adventure, slf4j and annotations from the jar.
             exclude(dependency("net.kyori:.*:.*"))
             exclude(dependency("org.slf4j:.*:.*"))
             exclude(dependency("org.jetbrains:annotations:.*"))
-            // common тащит cloud-core как api-зависимость - прокси-модулю он не нужен
-            // (админ-команды на нативном CommandManager), в jar не кладём.
-            exclude(dependency("org.incendo:cloud-core:.*"))
-            exclude(dependency("org.incendo:cloud-velocity:.*"))
-            exclude(dependency("org.incendo:cloud-services:.*"))
         }
     }
 }
 
-// Версия проксируется в BuildConstants до компиляции, чтобы @Plugin видел константу.
+// The version is proxied into BuildConstants before compilation so @Plugin sees a constant.
 val versionedSource = file("src/main/versioned")
 val versionedDest = layout.buildDirectory.dir("generated/sources/versioned")
 val generateVersionedSources = tasks.register<Copy>("generateVersionedSources") {
-    // Комменты в исходнике только ASCII: expand() читает файл в кодировке платформы,
-    // не-ASCII превращается в кракозябры независимо от filteringCharset.
+    // Comments in the source file are ASCII-only: expand() reads the file in the
+    // platform encoding, non-ASCII breaks regardless of filteringCharset.
     filteringCharset = "UTF-8"
     val props = mapOf("version" to project.version)
     inputs.properties(props)

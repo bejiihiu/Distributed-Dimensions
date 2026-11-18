@@ -6,22 +6,18 @@ import kz.bejiihiu.dimensions.common.config.ChunkTicketsSettings;
 import kz.bejiihiu.dimensions.common.config.CrossServerTransferSettings;
 import kz.bejiihiu.dimensions.common.config.DatabaseSettings;
 import kz.bejiihiu.dimensions.common.config.DatabaseType;
-import kz.bejiihiu.dimensions.common.config.DebugSettings;
 import kz.bejiihiu.dimensions.common.config.DimensionTarget;
 import kz.bejiihiu.dimensions.common.config.DimensionsSettings;
 import kz.bejiihiu.dimensions.common.config.EndPortalsSettings;
 import kz.bejiihiu.dimensions.common.config.EntitiesSettings;
-import kz.bejiihiu.dimensions.common.config.GatewayPortalsSettings;
 import kz.bejiihiu.dimensions.common.config.GeneralSettings;
 import kz.bejiihiu.dimensions.common.config.MirageBlockEdits;
 import kz.bejiihiu.dimensions.common.config.MirageNamesSettings;
 import kz.bejiihiu.dimensions.common.config.MirageSettings;
 import kz.bejiihiu.dimensions.common.config.NetherPortalsSettings;
-import kz.bejiihiu.dimensions.common.config.NetworkProxySettings;
 import kz.bejiihiu.dimensions.common.config.NetworkSettings;
 import kz.bejiihiu.dimensions.common.config.PluginConfig;
 import kz.bejiihiu.dimensions.common.config.PortalsSettings;
-import kz.bejiihiu.dimensions.common.config.RedisSettings;
 import kz.bejiihiu.dimensions.common.config.SyncSettings;
 import kz.bejiihiu.dimensions.common.config.TransferSettings;
 
@@ -51,29 +47,25 @@ class OwnBackendEnvironmentTest {
 
     private static PluginConfig config(String sourceServer,
             DimensionTarget overworld, DimensionTarget nether, DimensionTarget end) {
-        NetworkSettings network = new NetworkSettings(new NetworkProxySettings(true),
-                new TransferSettings(Duration.ofMillis(10_000), 2),
+        NetworkSettings network = new NetworkSettings(new TransferSettings(Duration.ofMillis(10_000)),
                 new DimensionsSettings(overworld, nether, end),
                 sourceServer);
-        return new PluginConfig(3,
-                new GeneralSettings("en", true),
+        return new PluginConfig(4,
+                new GeneralSettings("en"),
                 network,
                 new PortalsSettings(
-                        new NetherPortalsSettings(true, true, true, true, true),
-                        new EndPortalsSettings(true),
-                        new GatewayPortalsSettings(true)),
+                        new NetherPortalsSettings(true),
+                        new EndPortalsSettings(true)),
                 new EntitiesSettings(new CrossServerTransferSettings(false,
                         true, false, false, false, true,
                         new ChunkTicketsSettings(true, true))),
                 new ApiSettings(true, new ApiCompatSettings(false, true)),
                 new SyncSettings(true, true, "auto", Duration.ofMillis(5_000), 20, "", "getPlayer"),
-                new RedisSettings(false),
                 new DatabaseSettings(DatabaseType.MYSQL,
                         "jdbc:mysql://localhost:3306/distributed_dimensions",
                         "mongodb://localhost:27017",
                         "distributed_dimensions", "secret-password-123",
                         "distributed_dimensions", 10, 2, Duration.ofMillis(5_000), "dd_"),
-                new DebugSettings(false, false, false, false),
                 new MirageSettings(true,
                         new MirageNamesSettings("world", "world_nether", "world_the_end"),
                         MirageBlockEdits.CANCEL, 6000));

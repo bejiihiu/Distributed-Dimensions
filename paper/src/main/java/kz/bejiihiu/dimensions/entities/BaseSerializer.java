@@ -31,7 +31,8 @@ abstract class BaseSerializer implements EntitySerializer {
         FieldCodec.putBoolean(obj, "silent", entity.isSilent());
         FieldCodec.putBoolean(obj, "glowing", entity.isGlowing());
         FieldCodec.putBoolean(obj, "invisible", entity.isInvisible());
-        FieldCodec.putBoolean(obj, "invulnerable", entity.isInvulnerable());
+        // pairs with writeBase()'s setInvulnerable: the marked state round-trips, temporary ticks don't
+        FieldCodec.putBoolean(obj, "invulnerable", entity.isMarkedInvulnerable());
         String customName = FieldCodec.name(entity.customName());
         if (customName != null) {
             obj.addProperty("customName", customName);
@@ -101,7 +102,7 @@ abstract class BaseSerializer implements EntitySerializer {
         java.util.List<String> skipped = new java.util.ArrayList<>();
         for (org.bukkit.potion.PotionEffect effect : FieldCodec.effects(
                 obj.getAsJsonArray("effects"), skipped)) {
-            entity.addPotionEffect(effect, true);
+            entity.addPotionEffect(effect);
         }
         if (!skipped.isEmpty()) {
             metrics.add(EntityTransferMetrics.DEGRADED, skipped.size());

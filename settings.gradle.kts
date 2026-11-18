@@ -1,7 +1,7 @@
 plugins {
-    // Резолвер JDK для тулчейнов через Foojay: без convention-плагина резолвер
-    // не регистрируется и Gradle качает JDK авто-провижинингом (deprecated в 9.x,
-    // в 10.x станет ошибкой). Именно -convention вариант.
+    // Foojay resolver for toolchain JDKs: without the -convention plugin the resolver
+    // is never registered and Gradle falls back to auto-provisioning (deprecated in 9.x,
+    // an error in 10.x). The -convention variant is the supported one.
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 

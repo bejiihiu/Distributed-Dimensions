@@ -21,16 +21,16 @@ dependencies {
     // linkage-guarded and only used when HuskSync is actually installed.
     compileOnly(libs.husksync.bukkit)
 
-    // Фикстуры (FakeSchedulers, fake gateway, мировые прокси) публикуются через
-    // testFixtures, чтобы поздние волны могли гонять логику порталов/сущностей
-    // без поднятого сервера. Фикстуры тоже компилируются против paper-api.
+    // Fixtures (FakeSchedulers, fake gateway, world proxies) are published through
+    // testFixtures so later waves can drive portal/entity logic without a live server.
+    // The fixtures compile against paper-api too.
     testFixturesImplementation(libs.paper.api)
 
     testImplementation(testFixtures(project(":paper")))
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.launcher)
-    // Тесты трогают bukkit-интерфейсы (World, прокси) — нужен paper-api на classpath.
+    // Tests touch bukkit interfaces (World, proxies) — paper-api must be on the classpath.
     testImplementation(libs.paper.api)
 }
 
@@ -45,9 +45,9 @@ tasks {
     }
 
     processResources {
-        // filteringCharset выставлен, но на expand() он не влияет (проверено:
-        // кириллица всё равно бьётся). Правило простое: через expand гоняем
-        // только ASCII (версию), весь не-ASCII лежит в yml литералом.
+        // filteringCharset is set, but it does not affect expand() (verified:
+        // Cyrillic still breaks). Rule of thumb: only ASCII (the version) goes through
+        // expand; all non-ASCII lives in the yml as literals.
         filteringCharset = "UTF-8"
         val props = mapOf("version" to version)
         filesMatching("paper-plugin.yml") {
@@ -58,20 +58,30 @@ tasks {
     named<ShadowJar>("shadowJar") {
         archiveClassifier.set("")
         archiveBaseName.set("distributed-dimensions-paper")
-        // Склеиваем META-INF/services всех либ (Configurate), иначе SPI провайдеры потеряются.
+        // Merge META-INF/services from all libs (Configurate), otherwise the SPI providers are lost.
         mergeServiceFiles()
-        // Без этого Shadow 9.x режет дубликаты service-файлов до того как их увидит
-        // трансформер (ворнинг при сборке) — провайдеры Configurate/Cloud теряются.
-        // Фикс service file merging: дубликаты пропускаем внутрь, склейкой
-        // занимается сам трансформер.
+        // Without this Shadow cuts duplicate service files before the transformer
+        // sees them (build-time warning) - the Configurate providers are lost.
+        // Service file merging fix: duplicates go inside, the transformer does the merging.
         filesMatching("META-INF/services/**") {
             duplicatesStrategy = DuplicatesStrategy.INCLUDE
         }
-        // Всё своё тащим под своим пакетом, чтобы не конфликтовать с другими плагинами.
+        // Drop JDBC-driver root-level junk (mysql/mariadb connector metadata) - anchored root
+        // patterns only. admin/messages_*.properties, config.yml, our packages and
+        // META-INF/services stay untouched.
+        filesMatching("INFO_BIN") { exclude() }
+        filesMatching("INFO_SRC") { exclude() }
+        filesMatching("mariadb.properties") { exclude() }
+        filesMatching("deprecated.properties") { exclude() }
+        filesMatching("driver.properties") { exclude() }
+        filesMatching("CONTRIBUTING.md") { exclude() }
+        filesMatching("LICENSE") { exclude() }
+        filesMatching("README") { exclude() }
+
+        // Bundle everything of ours under our own package so it does not clash with other plugins.
         relocate("org.spongepowered.configurate", "kz.bejiihiu.dimensions.libs.configurate")
         relocate("org.yaml.snakeyaml", "kz.bejiihiu.dimensions.libs.snakeyaml")
         relocate("io.leangen.geantyref", "kz.bejiihiu.dimensions.libs.geantyref")
-        relocate("org.incendo.cloud", "kz.bejiihiu.dimensions.libs.cloud")
         relocate("com.google.gson", "kz.bejiihiu.dimensions.libs.gson")
         relocate("com.zaxxer.hikari", "kz.bejiihiu.dimensions.libs.hikari")
         relocate("com.mysql", "kz.bejiihiu.dimensions.libs.mysql")
@@ -79,8 +89,11 @@ tasks {
         relocate("org.postgresql", "kz.bejiihiu.dimensions.libs.postgresql")
         relocate("com.mongodb", "kz.bejiihiu.dimensions.libs.mongodb")
         relocate("org.bson", "kz.bejiihiu.dimensions.libs.bson")
+        relocate("com.google.protobuf", "kz.bejiihiu.dimensions.libs.protobuf")
+        relocate("org.checkerframework", "kz.bejiihiu.dimensions.libs.checkerframework")
+        relocate("org.jspecify", "kz.bejiihiu.dimensions.libs.jspecify")
         dependencies {
-            // Даёт сервер: Adventure, slf4j и аннотации в jar не кладём.
+            // Provided by the server: cut Adventure, slf4j and the annotations from the jar.
             exclude(dependency("net.kyori:.*:.*"))
             exclude(dependency("org.slf4j:.*:.*"))
             exclude(dependency("org.jetbrains:annotations:.*"))

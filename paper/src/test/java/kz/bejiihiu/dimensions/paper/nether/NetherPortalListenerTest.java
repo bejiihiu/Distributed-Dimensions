@@ -170,9 +170,9 @@ class NetherPortalListenerTest {
         var disabled = new kz.bejiihiu.dimensions.common.config.PluginConfig(
                 cfg.configVersion(), cfg.general(), cfg.network(),
                 new kz.bejiihiu.dimensions.common.config.PortalsSettings(
-                        new kz.bejiihiu.dimensions.common.config.NetherPortalsSettings(false, true, true, true, true),
-                        cfg.portals().end(), cfg.portals().gateway()),
-                cfg.entities(), cfg.api(), cfg.sync(), cfg.redis(), cfg.database(), cfg.debug(), cfg.mirage());
+                        new kz.bejiihiu.dimensions.common.config.NetherPortalsSettings(false),
+                        cfg.portals().end()),
+                cfg.entities(), cfg.api(), cfg.sync(), cfg.database(), cfg.mirage());
         FakeTransferBackend disabledBackend = new FakeTransferBackend(disabled);
         PortalTransferService disabledService =
                 new PortalTransferService(disabledBackend, java.time.Clock.fixed(T0, ZoneOffset.UTC));

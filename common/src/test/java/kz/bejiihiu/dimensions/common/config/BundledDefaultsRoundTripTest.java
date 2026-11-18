@@ -33,25 +33,17 @@ class BundledDefaultsRoundTripTest {
 
         // general
         assertEquals("en", c.general().language());
-        assertTrue(c.general().strictVanillaMode());
 
         // network
-        assertTrue(c.network().proxy().enabled());
         assertEquals("", c.network().sourceServer());
         assertEquals(Duration.ofMillis(10_000), c.network().transfer().timeout());
-        assertEquals(2, c.network().transfer().maxRetries());
         assertEquals(new DimensionTarget("overworld", "minecraft:overworld"), c.network().dimensions().overworld());
         assertEquals(new DimensionTarget("nether", "minecraft:the_nether"), c.network().dimensions().nether());
         assertEquals(new DimensionTarget("end", "minecraft:the_end"), c.network().dimensions().end());
 
         // portals
         assertTrue(c.portals().nether().enabled());
-        assertTrue(c.portals().nether().preserveVanillaDelay());
-        assertTrue(c.portals().nether().preserveVanillaSearch());
-        assertTrue(c.portals().nether().preserveVanillaCreation());
-        assertTrue(c.portals().nether().preserveVanillaOrientation());
         assertTrue(c.portals().end().enabled());
-        assertTrue(c.portals().gateway().enabled());
 
         // entities
         assertFalse(c.entities().crossServerTransfer().enabled());
@@ -78,9 +70,6 @@ class BundledDefaultsRoundTripTest {
         assertEquals("getPlayer", c.sync().reflectionGetter());
         assertFalse(c.sync().reflectionConfigured());
 
-        // redis
-        assertFalse(c.redis().enabled());
-
         // database
         assertEquals(DatabaseType.MYSQL, c.database().type());
         assertEquals("jdbc:mysql://localhost:3306/distributed_dimensions", c.database().jdbcUrl());
@@ -93,12 +82,6 @@ class BundledDefaultsRoundTripTest {
         assertEquals(Duration.ofMillis(5_000), c.database().connectionTimeout());
         assertEquals("dd_", c.database().tablePrefix());
 
-        // debug
-        assertFalse(c.debug().portalSearch());
-        assertFalse(c.debug().coordinateConversion());
-        assertFalse(c.debug().transfers());
-        assertFalse(c.debug().entityTransfer());
-
         // mirage
         assertTrue(c.mirage().enabled());
         assertEquals("world", c.mirage().names().overworld());
@@ -108,7 +91,7 @@ class BundledDefaultsRoundTripTest {
         assertEquals(6000, c.mirage().fixedTime());
 
         // schema version
-        assertEquals(3, c.configVersion());
+        assertEquals(4, c.configVersion());
     }
 
     @Test

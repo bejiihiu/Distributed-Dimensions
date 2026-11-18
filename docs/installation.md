@@ -24,7 +24,7 @@ end      backend (port 25568) ──┘        + shared DB (port 3306)
 | Backends | **Paper 26.3+ or Folia 26.3+**, one per dimension. `folia-supported: true` in the plugin metadata |
 | Proxy | **Velocity 4.2+** |
 | Database | **Required.** MySQL 8+ / MariaDB / PostgreSQL, **or** MongoDB. The transfer journal lives here; without it the backends boot fail-closed and refuse every transfer |
-| Redis | **Not used by this plugin.** `redis.enabled` is reserved and read by nothing. HuskSync (below) requires its own Redis 5+; that is HuskSync's requirement, not ours |
+| Redis | **Not used by this plugin.** There is no redis key in the configuration at all. HuskSync (below) requires its own Redis 5+; that is HuskSync's requirement, not ours |
 | External sync plugin | **Required for correctness.** HuskSync is the tested/recommended path. Without any sync plugin, player data (inventory, XP, effects…) is never moved between backends by us — install one or accept silent staleness |
 | OS/network | Hosts that can reach each other on the backend ports, one publicly reachable port (the proxy's) |
 
@@ -182,7 +182,7 @@ network:
     end:
       server: "end"
       dimension: "minecraft:the_end"
-config-version: 3
+config-version: 4
 ```
 
 The proxy **ignores** `database.*` for anything it opens — it never opens the journal — but
@@ -279,8 +279,6 @@ network:
   # programmatic-API transfer path (transfers fail closed with UNAVAILABLE
   # without it); the portal flows derive their source from network.dimensions.
   source-server: "overworld"
-  proxy:
-    enabled: true
   transfer:
     timeout: 10000                              # keep identical on proxy and backends
   dimensions:
@@ -303,7 +301,7 @@ sync:
 mirage:
   enabled: true                                 # void stub worlds for the other dimensions
 
-config-version: 3
+config-version: 4
 ```
 
 Critical, and easy to get wrong:
@@ -341,7 +339,7 @@ Critical, and easy to get wrong:
   custom border across the network. If you set custom borders, set the same size and center
   on all three backends (`worldborder set <size>` and `worldborder center <x> <z>` per
   world). Vanilla default borders match and need nothing.
-- `config-version: 3` — never edit by hand; migrations run automatically on open.
+- `config-version: 4` — never edit by hand; migrations run automatically on open.
 
 ### 6.3 Mirage worlds
 
@@ -451,7 +449,7 @@ lines, `0 in flight`.
 **Each backend (logs):**
 
 ```text
-[INFO] configuration: source=FILE file-created=false config-version=3 warnings=0 notes=…
+[INFO] configuration: source=FILE file-created=false config-version=4 warnings=0 notes=…
 [INFO] dimensions: minecraft:overworld -> server 'overworld'
 [INFO] dimensions: minecraft:the_nether -> server 'nether'
 [INFO] dimensions: minecraft:the_end -> server 'end'
@@ -471,7 +469,7 @@ Fix the cause named in the line (usually persistence or config), restart, re-che
 2. Enter → you should appear on the **End backend** on the obsidian platform (100.5, 49, 0.5).
 3. `/ddproxy transfers 3` on the proxy shows a `SUCCESS` row with both server names.
 4. `/dd info` on the backend prints the plugin version, the server version, **HEALTHY**
-   (or DEGRADED with reasons), the config source and `config-version=3`, the database
+   (or DEGRADED with reasons), the config source and `config-version=4`, the database
    engine/pool/prefix, the three `dimensions:` routing lines, the mirage line
    (`count` = tracked mirage worlds), the sync line (`level`/`phase`/`wait-for-sync`)
    and uptime. `/dd mirage` lists the tracked mirage worlds. Any `SEVERE` line in the

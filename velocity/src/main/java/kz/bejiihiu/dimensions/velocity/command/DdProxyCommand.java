@@ -16,7 +16,7 @@ import java.util.stream.Stream;
 
 /**
  * Native admin command for the proxy half: {@code /ddproxy status|reload|transfers [n]}.
- * No cloud framework - the surface is small enough to keep in one class, and every piece of
+ * No command framework - the surface is small enough to keep in one class, and every piece of
  * information comes from a services callback so the command stays testable without a proxy.
  *
  * <p>Permission: {@value #PERMISSION} (default: console; grant to operators on servers with a

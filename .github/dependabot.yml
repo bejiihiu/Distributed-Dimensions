@@ -7,8 +7,8 @@ updates:
     groups:
       gradle-wrapper:
         patterns: ["gradle-wrapper"]
-    # Мажоры либ больше не игнорим: рантаймы платформ (Paper 26.x, Velocity 4.x)
-    # сами едут на свежих мажорах, отставать от них дороже чем обновляться.
+    # Library majors are no longer ignored: the platform runtimes (Paper 26.x, Velocity 4.x)
+    # ship on fresh majors themselves, lagging behind costs more than updating.
   - package-ecosystem: github-actions
     directory: /
     schedule:

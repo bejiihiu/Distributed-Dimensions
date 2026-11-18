@@ -1,29 +1,29 @@
 # Contributing
 
-Коротко: форк → ветка → PR в main. Дальше детали.
+In short: fork → branch → PR into main. Details below.
 
-## Коммиты
+## Commits
 
 Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
-Пример: `feat: add nether portal search to common`.
+Example: `feat: add nether portal search to common`.
 
-## Код
+## Code
 
-- Java 25 везде, единый тулчейн (см. корневой `build.gradle.kts`). Preview-фичи
-  (`--enable-preview`) в шиппаемом коде запрещены: серверы флаг не дадут, jar не стартует.
-- Общая логика — в `common`, платформенный код — только адаптеры в `paper`/`velocity`.
-- Публичные методы покрываются тестами в `common/src/test` (JUnit, швы — публичные интерфейсы).
-- Пользовательский ввод в MiniMessage только через `Placeholder.unparsed/parsed`, никогда конкатенацией.
-- Folia-safe с самого начала: entity/region/global/async schedulers по месту,
-  никакого Bukkit API из чужих потоков.
-- Никаких mock/stub-заглушек в шиппаемом коде: реализуй полностью или не делай.
-- Комменты в коде — человеческие, на английском. Юзеру видимые строки — грамотный английский.
+- Java 25 everywhere, a single toolchain (see the root `build.gradle.kts`). Preview features
+  (`--enable-preview`) are forbidden in shipped code: servers won't supply the flag, and the jar won't start.
+- Shared logic lives in `common`; platform code is adapter-only, in `paper`/`velocity`.
+- Public methods are covered by tests in `common/src/test` (JUnit, seams — public interfaces).
+- User input into MiniMessage only through `Placeholder.unparsed/parsed`, never by concatenation.
+- Folia-safe from the start: entity/region/global/async schedulers in the right place,
+  no Bukkit API from foreign threads.
+- No mocks/stubs in shipped code: implement it fully or don't do it.
+- Code comments are human, in English. User-facing strings are proper, clean English.
 
-## Проверки перед PR
+## Checks before a PR
 
 ```bash
 ./gradlew build
 ```
 
-Зелёный build = тесты, shade-сборка обоих jar. Дев-серверы для ручной проверки:
+A green build covers the tests and the shade assembly of both jars. Dev servers for manual checks:
 `./gradlew :paper:runServer`, `./gradlew :velocity:runVelocity`.
