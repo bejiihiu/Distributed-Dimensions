@@ -14,7 +14,7 @@ gson = "2.14.0"
 # Persistence (the plugin's own state). JDBC drivers are runtime dependencies,
 # bundled into both jars with relocation; the admin must not carry extra files.
 hikaricp = "7.1.0"
-mongodb-driver = "5.14.0"
+mongodb-driver = "5.15.0"
 mysql-connector = "26.10.0"
 mariadb-client = "4.0.0"
 postgresql = "42.7.14"
